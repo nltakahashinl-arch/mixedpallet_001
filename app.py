@@ -1,7 +1,7 @@
 import streamlit as st
 import matplotlib.pyplot as plt
+import matplotlib.font_manager as fm  # 追加: フォント管理用
 import matplotlib.patches as patches
-import japanize_matplotlib
 import io
 import base64
 import os
@@ -20,7 +20,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- フォント準備 (Streamlit Cloud対策) ---
+# --- フォント準備 (Streamlit Cloud対策 & Matplotlib設定) ---
 @st.cache_resource
 def setup_font():
     font_path = "ipaexg.ttf"
@@ -29,6 +29,11 @@ def setup_font():
         subprocess.run(["wget", "https://moji.or.jp/wp-content/ipafont/IPAexfont/ipaexg00401.zip"])
         subprocess.run(["unzip", "-o", "ipaexg00401.zip"])
         subprocess.run(["cp", "ipaexg00401/ipaexg.ttf", "."])
+    
+    # 【変更点】Matplotlibにフォントを登録
+    fm.fontManager.addfont(font_path)
+    plt.rc('font', family='IPAexGothic')
+    
     return font_path
 
 font_file = setup_font()
@@ -193,10 +198,6 @@ def create_pdf(current_pallets, current_params, truck_img_bytes):
     c.drawString(40, text_y, "■ 入力商品情報")
     text_y -= 20
     c.setFont("IPAexGothic", 10)
-    
-    # Session Stateから入力値を参照できないため、current_params等で渡すか
-    # ここでは詳細な入力ログは省略するか、引数で渡す設計にする
-    # 今回はシンプル化のため、パラメータ確認用の簡易表示とする
     
     # 描画開始位置の調整
     bottom_of_truck = h_a4 - 50 - disp_h - 10
