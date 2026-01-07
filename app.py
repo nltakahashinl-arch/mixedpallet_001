@@ -4,8 +4,8 @@ import matplotlib.font_manager as fm
 import matplotlib.patches as patches
 import io
 import os
-import urllib.request  # 追加: Python標準のダウンロード機能
-import zipfile         # 追加: Python標準の解凍機能
+import urllib.request
+import zipfile
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfbase import pdfmetrics
@@ -23,47 +23,32 @@ st.set_page_config(
 @st.cache_resource
 def setup_font():
     font_path = "ipaexg.ttf"
-    
-    # フォントファイルがなければダウンロード・解凍
     if not os.path.exists(font_path):
         url = "https://moji.or.jp/wp-content/ipafont/IPAexfont/ipaexg00401.zip"
         zip_name = "ipaexg00401.zip"
-        
-        # 1. ダウンロード (urllib使用)
         try:
             urllib.request.urlretrieve(url, zip_name)
-        except Exception as e:
-            st.error(f"フォントのダウンロードに失敗しました: {e}")
-            return None
-
-        # 2. 解凍 (zipfile使用)
-        try:
             with zipfile.ZipFile(zip_name, 'r') as z:
                 z.extractall(".")
-        except Exception as e:
-            st.error(f"フォントの解凍に失敗しました: {e}")
+            extracted_path = "ipaexg00401/ipaexg.ttf"
+            if os.path.exists(extracted_path):
+                os.replace(extracted_path, font_path)
+        except Exception:
             return None
-
-        # 3. ファイル移動
-        extracted_path = "ipaexg00401/ipaexg.ttf"
-        if os.path.exists(extracted_path):
-            os.replace(extracted_path, font_path)
     
-    # フォント登録
     if os.path.exists(font_path):
         fm.fontManager.addfont(font_path)
         plt.rc('font', family='IPAexGothic')
         return font_path
-    else:
-        st.error("フォントファイルが見つかりません。")
-        return None
+    return None
 
 font_file = setup_font()
 
 # --- トラック描画関数 ---
 def create_horizontal_trucks_figure(num_pallets):
+    # 背景を白に設定（ダークモード対策）
     fig, ax = plt.subplots(2, 1, figsize=(6, 3))
-    fig.patch.set_alpha(0)
+    fig.patch.set_facecolor('white') 
 
     SCALE = 1/100
     PALLET_W = 1100 * SCALE
@@ -79,7 +64,9 @@ def create_horizontal_trucks_figure(num_pallets):
     LIMIT_Y_MAX = TRUCK_W_BODY + 20
 
     def draw_truck_h(ax_obj, truck_type, max_p, current_p):
-        ax_obj.patch.set_alpha(0)
+        # 軸の背景も白に
+        ax_obj.set_facecolor('white')
+        
         if truck_type == '4t':
             TRUCK_L = 6200 * SCALE
             color_cab = '#87CEEB'
@@ -93,7 +80,8 @@ def create_horizontal_trucks_figure(num_pallets):
         ax_obj.set_ylim(LIMIT_Y_MIN, LIMIT_Y_MAX)
         ax_obj.set_aspect('equal')
         ax_obj.axis('off')
-        ax_obj.set_title(label, fontsize=10, fontweight='bold', loc='left')
+        # タイトル色は黒固定
+        ax_obj.set_title(label, fontsize=10, fontweight='bold', loc='left', color='black')
 
         # キャビン
         ax_obj.add_patch(patches.FancyBboxPatch((-CABIN_L, 0), CABIN_L-2, TRUCK_W_BODY, boxstyle="round,pad=0.2", fc='white', ec='black', lw=1.0))
@@ -123,7 +111,8 @@ def create_horizontal_trucks_figure(num_pallets):
             if i < current_p:
                 color = '#90EE90' if truck_type == '10t' else '#87CEEB'
                 ax_obj.add_patch(patches.Rectangle((px, py), PALLET_W, PALLET_D, fc=color, ec='black', alpha=0.8))
-                ax_obj.text(px + PALLET_W/2, py + PALLET_D/2, f"P{i+1}", ha='center', va='center', fontsize=6, fontweight='bold')
+                # 文字色も黒固定
+                ax_obj.text(px + PALLET_W/2, py + PALLET_D/2, f"P{i+1}", ha='center', va='center', fontsize=6, fontweight='bold', color='black')
 
     draw_truck_h(ax[0], '4t', 10, num_pallets)
     draw_truck_h(ax[1], '10t', 16, num_pallets)
@@ -132,8 +121,12 @@ def create_horizontal_trucks_figure(num_pallets):
 
 # --- パレット詳細図描画関数 ---
 def draw_pallet_figure(PW, PD, PH, p_items, figsize=(18, 5)):
+    # 詳細図も背景白に
     fig, ax = plt.subplots(1, 3, figsize=figsize)
+    fig.patch.set_facecolor('white')
+    
     # 1. 上面図
+    ax[0].set_facecolor('white')
     ax[0].set_aspect('equal')
     ax[0].add_patch(patches.Rectangle((0,0), PW, PD, fill=False, lw=2))
     sorted_items = sorted(p_items, key=lambda x: x.get('z', 0))
@@ -141,50 +134,54 @@ def draw_pallet_figure(PW, PD, PH, p_items, figsize=(18, 5)):
         ax[0].add_patch(patches.Rectangle((b['x'], b['y']), b['w'], b['d'], facecolor=b['col'], edgecolor='black', alpha=0.7))
         txt = f"{b['name']}\n{b['ly']}段"
         if b.get('child'): txt += f"\n(上:{b['child']['name']})"
-        ax[0].text(b['x'] + b['w']/2, b['y'] + b['d']/2, txt, ha='center', va='center', fontsize=8)
-    ax[0].set_xlim(-50, PW+50); ax[0].set_ylim(-50, PD+50); ax[0].invert_yaxis(); ax[0].set_title("① 上面図")
+        ax[0].text(b['x'] + b['w']/2, b['y'] + b['d']/2, txt, ha='center', va='center', fontsize=8, color='black')
+    ax[0].set_xlim(-50, PW+50); ax[0].set_ylim(-50, PD+50); ax[0].invert_yaxis()
+    ax[0].set_title("① 上面図", color='black')
     
     # 2. 正面図
+    ax[1].set_facecolor('white')
     ax[1].add_patch(patches.Rectangle((0,0), PW, PH, fill=False, lw=2))
     for b in p_items:
         z_base = b.get('z', 0)
         for ly in range(b['ly']):
             y_pos = z_base + ly * b['h']
             ax[1].add_patch(patches.Rectangle((b['x'], y_pos), b['w'], b['h'], facecolor=b['col'], edgecolor='black', alpha=0.5))
-        ax[1].text(b['x'] + b['w']/2, z_base + b['h_total']/2, b['name'], ha='center', va='center', fontsize=8)
+        ax[1].text(b['x'] + b['w']/2, z_base + b['h_total']/2, b['name'], ha='center', va='center', fontsize=8, color='black')
         if b.get('child'):
             c_blk = b['child']; c_base = z_base + b['h_total']
             for ly in range(c_blk['ly']):
                 y_pos = c_base + ly * c_blk['h']
                 ax[1].add_patch(patches.Rectangle((b['x'], y_pos), c_blk['w'], c_blk['h'], facecolor=c_blk['col'], edgecolor='black', alpha=0.5))
-    ax[1].set_xlim(-50, PW+50); ax[1].set_ylim(0, PH+100); ax[1].set_title("② 正面図")
+    ax[1].set_xlim(-50, PW+50); ax[1].set_ylim(0, PH+100)
+    ax[1].set_title("② 正面図", color='black')
 
     # 3. 側面図
+    ax[2].set_facecolor('white')
     ax[2].add_patch(patches.Rectangle((0,0), PD, PH, fill=False, lw=2))
     for b in p_items:
         z_base = b.get('z', 0)
         for ly in range(b['ly']):
             y_pos = z_base + ly * b['h']
             ax[2].add_patch(patches.Rectangle((b['y'], y_pos), b['d'], b['h'], facecolor=b['col'], edgecolor='black', alpha=0.5))
-        ax[2].text(b['y'] + b['d']/2, z_base + b['h_total']/2, b['name'], ha='center', va='center', fontsize=8)
+        ax[2].text(b['y'] + b['d']/2, z_base + b['h_total']/2, b['name'], ha='center', va='center', fontsize=8, color='black')
         if b.get('child'):
             c_blk = b['child']; c_base = z_base + b['h_total']
             for ly in range(c_blk['ly']):
                 y_pos = c_base + ly * c_blk['h']
                 ax[2].add_patch(patches.Rectangle((b['y'], y_pos), c_blk['w'], c_blk['h'], facecolor=c_blk['col'], edgecolor='black', alpha=0.5))
-    ax[2].set_xlim(-50, PD+50); ax[2].set_ylim(0, PH+100); ax[2].set_title("③ 側面図")
+    ax[2].set_xlim(-50, PD+50); ax[2].set_ylim(0, PH+100)
+    ax[2].set_title("③ 側面図", color='black')
+    
     plt.tight_layout()
     return fig
 
 # --- PDF生成関数 ---
-def create_pdf(current_pallets, current_params, truck_img_bytes):
+def create_pdf(current_pallets, current_params, truck_img_bytes, input_products):
     buffer = io.BytesIO()
-    # フォント登録（フォントファイルがある場合のみ）
     if os.path.exists('ipaexg.ttf'):
         pdfmetrics.registerFont(TTFont('IPAexGothic', 'ipaexg.ttf'))
         font_name = "IPAexGothic"
     else:
-        # フォールバック（日本語が出ないがエラー回避）
         font_name = "Helvetica"
 
     c = canvas.Canvas(buffer, pagesize=A4)
@@ -195,6 +192,7 @@ def create_pdf(current_pallets, current_params, truck_img_bytes):
     c.drawString(40, h_a4 - 50, "パレット積載シミュレーション報告書")
 
     # トラック画像
+    disp_h = 0
     if truck_img_bytes:
         truck_img_bytes.seek(0)
         img = ImageReader(truck_img_bytes)
@@ -202,9 +200,8 @@ def create_pdf(current_pallets, current_params, truck_img_bytes):
         aspect = ih / float(iw)
         disp_w = 180
         disp_h = disp_w * aspect
+        # 画像配置
         c.drawImage(img, w_a4 - disp_w - 20, h_a4 - 50 - disp_h - 10, width=disp_w, height=disp_h, preserveAspectRatio=True)
-    else:
-        disp_h = 100
 
     # サマリー
     c.setFont(font_name, 12)
@@ -221,12 +218,19 @@ def create_pdf(current_pallets, current_params, truck_img_bytes):
     text_y -= 15
     c.drawString(40, text_y, f"Max {current_params['MAX_W']}kg / 許容: {current_params['OH']}mm")
 
-    # 入力情報
-    text_y -= 30
+    # 入力情報 (PDFへリストを出力)
+    text_y -= 35
     c.drawString(40, text_y, "■ 入力商品情報")
-    text_y -= 20
+    text_y -= 15
     c.setFont(font_name, 10)
     
+    for p in input_products:
+        if p['n'] > 0:
+            info_text = f"{p['name']}: {p['w']}x{p['d']}x{p['h']}mm, {p['g']}kg, {p['n']}個"
+            c.drawString(50, text_y, info_text)
+            text_y -= 12
+
+    # 詳細描画の開始位置計算
     bottom_of_truck = h_a4 - 50 - disp_h - 10
     start_y_p1 = min(text_y - 40, bottom_of_truck - 30)
     y = start_y_p1
@@ -234,6 +238,7 @@ def create_pdf(current_pallets, current_params, truck_img_bytes):
     PW = current_params['PW']; PD = current_params['PD']; PH = current_params['PH']
 
     for i, p_items in enumerate(current_pallets):
+        # 改ページ判定
         is_new_page = False
         if i == 2: is_new_page = True
         elif i > 2 and (i - 2) % 4 == 0: is_new_page = True
@@ -252,6 +257,8 @@ def create_pdf(current_pallets, current_params, truck_img_bytes):
 
         c.setFont(font_name, 12)
         c.drawString(40, y, f"■ パレット {i+1}  (重量: {p_weight}kg)")
+        
+        # 内訳を表示
         c.setFont(font_name, 9)
         c.drawString(240, y, f"内訳: {d_str}")
 
@@ -274,7 +281,6 @@ def create_pdf(current_pallets, current_params, truck_img_bytes):
 # --------------------------------
 
 st.title("📦 パレット積載シミュレーター")
-st.markdown("商品をパレットに最適に積み付け、必要なトラック台数を計算します。")
 
 # サイドバー: パレット設定
 with st.sidebar:
@@ -283,9 +289,9 @@ with st.sidebar:
     pd_val = st.number_input("奥行 (mm)", value=1100, step=10)
     ph_val = st.number_input("高さ (mm)", value=1700, step=10)
     pm_val = st.number_input("最大重量 (kg)", value=1000, step=10)
-    oh_val = st.number_input("重ね積み許容 (mm)", value=30, step=5, help="サイズ違いを重ねる際の許容差")
+    oh_val = st.number_input("重ね積み許容 (mm)", value=30, step=5)
 
-# メインエリア: 商品入力
+# メインエリア: 商品入力 (横並びグリッドレイアウト)
 st.subheader("商品情報入力")
 
 # デフォルト値
@@ -298,7 +304,7 @@ defaults = [
 ]
 colors = ['#ff9999', '#99ccff', '#99ff99', '#ffff99', '#cc99ff']
 
-# Session Stateの初期化
+# Session State初期化
 if 'products' not in st.session_state:
     st.session_state.products = []
     for i in range(5):
@@ -307,23 +313,44 @@ if 'products' not in st.session_state:
             'g': defaults[i][3], 'n': defaults[i][4]
         })
 
-# 商品入力フォーム
-input_cols = st.columns(5)
+# --- グリッドレイアウト作成 ---
+# ヘッダー行
+cols_header = st.columns(5)
+for i, col in enumerate(cols_header):
+    col.markdown(f"**商品 {i+1}**")
+
+# 各パラメータを行ごとに配置 (Tab移動を横方向にするため)
+cols_w = st.columns(5)
+cols_d = st.columns(5)
+cols_h = st.columns(5)
+cols_g = st.columns(5)
+cols_n = st.columns(5)
+
+# データ保持用リスト
 products_data = []
 
-for i, col in enumerate(input_cols):
-    with col:
-        st.markdown(f"**商品 {i+1}**", unsafe_allow_html=True)
-        w = st.number_input(f"幅{i+1}", value=st.session_state.products[i]['w'], key=f"w_{i}")
-        d = st.number_input(f"奥{i+1}", value=st.session_state.products[i]['d'], key=f"d_{i}")
-        h = st.number_input(f"高{i+1}", value=st.session_state.products[i]['h'], key=f"h_{i}")
-        g = st.number_input(f"重{i+1}", value=st.session_state.products[i]['g'], key=f"g_{i}")
-        n = st.number_input(f"数{i+1}", value=st.session_state.products[i]['n'], key=f"n_{i}")
-        
-        products_data.append({
-            'name': f"商品{i+1}", 'w': w, 'd': d, 'h': h, 'g': g, 'n': n, 
-            'col': colors[i], 'id': i
-        })
+# 各列に入力ウィジェットを配置
+for i in range(5):
+    # 幅
+    with cols_w[i]:
+        w = st.number_input(f"幅(mm)", value=st.session_state.products[i]['w'], key=f"w_{i}", label_visibility="visible")
+    # 奥行
+    with cols_d[i]:
+        d = st.number_input(f"奥行(mm)", value=st.session_state.products[i]['d'], key=f"d_{i}", label_visibility="visible")
+    # 高さ
+    with cols_h[i]:
+        h = st.number_input(f"高さ(mm)", value=st.session_state.products[i]['h'], key=f"h_{i}", label_visibility="visible")
+    # 重量
+    with cols_g[i]:
+        g = st.number_input(f"重量(kg)", value=st.session_state.products[i]['g'], key=f"g_{i}", label_visibility="visible")
+    # 数量
+    with cols_n[i]:
+        n = st.number_input(f"数量(個)", value=st.session_state.products[i]['n'], key=f"n_{i}", label_visibility="visible")
+
+    products_data.append({
+        'name': f"商品{i+1}", 'w': w, 'd': d, 'h': h, 'g': g, 'n': n, 
+        'col': colors[i], 'id': i
+    })
 
 st.markdown("---")
 
@@ -395,6 +422,7 @@ if st.button("計算実行", type="primary", use_container_width=True):
 
         st.session_state.results = [ps['items'] for ps in pallet_states]
         st.session_state.params = {'PW':PW, 'PD':PD, 'PH':PH, 'MAX_W':MAX_W, 'OH':OH}
+        st.session_state.input_products = items # PDF出力用に保存
         st.session_state.calculated = True
 
 # --- 結果表示 ---
@@ -405,9 +433,10 @@ if st.session_state.get('calculated', False):
     
     st.markdown("### 📊 計算結果")
     
+    # トラック図生成 (背景白)
     fig_truck = create_horizontal_trucks_figure(total_p)
     img_buf = io.BytesIO()
-    fig_truck.savefig(img_buf, format='png', bbox_inches='tight', dpi=300)
+    fig_truck.savefig(img_buf, format='png', bbox_inches='tight', dpi=300, facecolor='white')
     img_buf.seek(0)
     st.session_state.truck_img = img_buf
 
@@ -417,7 +446,8 @@ if st.session_state.get('calculated', False):
         st.metric("必要パレット数", f"{total_p} 枚")
         st.info(f"🚚 4t車: {total_p/10.0:.1f} 台 / 10t車: {total_p/16.0:.1f} 台")
         
-        pdf_file = create_pdf(results, params, st.session_state.truck_img)
+        # PDFダウンロード
+        pdf_file = create_pdf(results, params, st.session_state.truck_img, st.session_state.input_products)
         st.download_button(
             label="📄 PDFレポートをダウンロード",
             data=pdf_file,
