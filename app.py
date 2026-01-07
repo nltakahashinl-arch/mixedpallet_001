@@ -1,12 +1,11 @@
 import streamlit as st
 import matplotlib.pyplot as plt
-import matplotlib.font_manager as fm  # 追加: フォント管理用
+import matplotlib.font_manager as fm
 import matplotlib.patches as patches
 import io
-import base64
 import os
-import sys
-import subprocess
+import urllib.request  # 追加: Python標準のダウンロード機能
+import zipfile         # 追加: Python標準の解凍機能
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfbase import pdfmetrics
@@ -20,27 +19,49 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- フォント準備 (Streamlit Cloud対策 & Matplotlib設定) ---
+# --- フォント準備 (外部コマンド非依存版) ---
 @st.cache_resource
 def setup_font():
     font_path = "ipaexg.ttf"
+    
+    # フォントファイルがなければダウンロード・解凍
     if not os.path.exists(font_path):
-        # フォントがない場合はダウンロード
-        subprocess.run(["wget", "https://moji.or.jp/wp-content/ipafont/IPAexfont/ipaexg00401.zip"])
-        subprocess.run(["unzip", "-o", "ipaexg00401.zip"])
-        subprocess.run(["cp", "ipaexg00401/ipaexg.ttf", "."])
+        url = "https://moji.or.jp/wp-content/ipafont/IPAexfont/ipaexg00401.zip"
+        zip_name = "ipaexg00401.zip"
+        
+        # 1. ダウンロード (urllib使用)
+        try:
+            urllib.request.urlretrieve(url, zip_name)
+        except Exception as e:
+            st.error(f"フォントのダウンロードに失敗しました: {e}")
+            return None
+
+        # 2. 解凍 (zipfile使用)
+        try:
+            with zipfile.ZipFile(zip_name, 'r') as z:
+                z.extractall(".")
+        except Exception as e:
+            st.error(f"フォントの解凍に失敗しました: {e}")
+            return None
+
+        # 3. ファイル移動
+        extracted_path = "ipaexg00401/ipaexg.ttf"
+        if os.path.exists(extracted_path):
+            os.replace(extracted_path, font_path)
     
-    # 【変更点】Matplotlibにフォントを登録
-    fm.fontManager.addfont(font_path)
-    plt.rc('font', family='IPAexGothic')
-    
-    return font_path
+    # フォント登録
+    if os.path.exists(font_path):
+        fm.fontManager.addfont(font_path)
+        plt.rc('font', family='IPAexGothic')
+        return font_path
+    else:
+        st.error("フォントファイルが見つかりません。")
+        return None
 
 font_file = setup_font()
 
-# --- トラック描画関数 (高画質版) ---
+# --- トラック描画関数 ---
 def create_horizontal_trucks_figure(num_pallets):
-    # Streamlit用にfigsizeを少し調整
     fig, ax = plt.subplots(2, 1, figsize=(6, 3))
     fig.patch.set_alpha(0)
 
@@ -158,15 +179,22 @@ def draw_pallet_figure(PW, PD, PH, p_items, figsize=(18, 5)):
 # --- PDF生成関数 ---
 def create_pdf(current_pallets, current_params, truck_img_bytes):
     buffer = io.BytesIO()
-    pdfmetrics.registerFont(TTFont('IPAexGothic', 'ipaexg.ttf'))
+    # フォント登録（フォントファイルがある場合のみ）
+    if os.path.exists('ipaexg.ttf'):
+        pdfmetrics.registerFont(TTFont('IPAexGothic', 'ipaexg.ttf'))
+        font_name = "IPAexGothic"
+    else:
+        # フォールバック（日本語が出ないがエラー回避）
+        font_name = "Helvetica"
+
     c = canvas.Canvas(buffer, pagesize=A4)
     w_a4, h_a4 = A4
 
     # タイトル
-    c.setFont("IPAexGothic", 20)
+    c.setFont(font_name, 20)
     c.drawString(40, h_a4 - 50, "パレット積載シミュレーション報告書")
 
-    # トラック画像 (高画質・省スペース)
+    # トラック画像
     if truck_img_bytes:
         truck_img_bytes.seek(0)
         img = ImageReader(truck_img_bytes)
@@ -176,10 +204,10 @@ def create_pdf(current_pallets, current_params, truck_img_bytes):
         disp_h = disp_w * aspect
         c.drawImage(img, w_a4 - disp_w - 20, h_a4 - 50 - disp_h - 10, width=disp_w, height=disp_h, preserveAspectRatio=True)
     else:
-        disp_h = 100 # 画像がない場合の仮の高さ
+        disp_h = 100
 
     # サマリー
-    c.setFont("IPAexGothic", 12)
+    c.setFont(font_name, 12)
     total_p = len(current_pallets)
     truck_4t = total_p / 10.0
     truck_10t = total_p / 16.0
@@ -197,9 +225,8 @@ def create_pdf(current_pallets, current_params, truck_img_bytes):
     text_y -= 30
     c.drawString(40, text_y, "■ 入力商品情報")
     text_y -= 20
-    c.setFont("IPAexGothic", 10)
+    c.setFont(font_name, 10)
     
-    # 描画開始位置の調整
     bottom_of_truck = h_a4 - 50 - disp_h - 10
     start_y_p1 = min(text_y - 40, bottom_of_truck - 30)
     y = start_y_p1
@@ -213,7 +240,7 @@ def create_pdf(current_pallets, current_params, truck_img_bytes):
 
         if is_new_page:
             c.showPage()
-            c.setFont("IPAexGothic", 12)
+            c.setFont(font_name, 12)
             y = h_a4 - 50
 
         p_weight = sum([b['g'] + (b['child']['g'] if b['child'] else 0) for b in p_items])
@@ -223,9 +250,9 @@ def create_pdf(current_pallets, current_params, truck_img_bytes):
             if b.get('child'): cnt[b['child']['name']] = cnt.get(b['child']['name'], 0) + b['child']['ly']
         d_str = ", ".join([f"{k}:{v}個" for k,v in cnt.items()])
 
-        c.setFont("IPAexGothic", 12)
+        c.setFont(font_name, 12)
         c.drawString(40, y, f"■ パレット {i+1}  (重量: {p_weight}kg)")
-        c.setFont("IPAexGothic", 9)
+        c.setFont(font_name, 9)
         c.drawString(240, y, f"内訳: {d_str}")
 
         fig = draw_pallet_figure(PW, PD, PH, p_items, figsize=(12, 3.5))
@@ -271,7 +298,7 @@ defaults = [
 ]
 colors = ['#ff9999', '#99ccff', '#99ff99', '#ffff99', '#cc99ff']
 
-# Session Stateの初期化 (入力値保持用)
+# Session Stateの初期化
 if 'products' not in st.session_state:
     st.session_state.products = []
     for i in range(5):
@@ -280,7 +307,7 @@ if 'products' not in st.session_state:
             'g': defaults[i][3], 'n': defaults[i][4]
         })
 
-# 商品入力フォームの生成
+# 商品入力フォーム
 input_cols = st.columns(5)
 products_data = []
 
@@ -366,7 +393,6 @@ if st.button("計算実行", type="primary", use_container_width=True):
                 new_state = {'items': [blk], 'cur_g': w_total, 'cx': blk['w'], 'cy': 0, 'rh': blk['d']}
                 blk['x'] = 0; blk['y'] = 0; blk['z'] = 0; pallet_states.append(new_state)
 
-        # 結果をSession Stateに保存
         st.session_state.results = [ps['items'] for ps in pallet_states]
         st.session_state.params = {'PW':PW, 'PD':PD, 'PH':PH, 'MAX_W':MAX_W, 'OH':OH}
         st.session_state.calculated = True
@@ -379,21 +405,18 @@ if st.session_state.get('calculated', False):
     
     st.markdown("### 📊 計算結果")
     
-    # トラック図の生成
     fig_truck = create_horizontal_trucks_figure(total_p)
     img_buf = io.BytesIO()
     fig_truck.savefig(img_buf, format='png', bbox_inches='tight', dpi=300)
     img_buf.seek(0)
-    st.session_state.truck_img = img_buf # PDF用に保存
+    st.session_state.truck_img = img_buf
 
-    # 左右カラムで結果表示
     col_res1, col_res2 = st.columns([1, 1])
     
     with col_res1:
         st.metric("必要パレット数", f"{total_p} 枚")
         st.info(f"🚚 4t車: {total_p/10.0:.1f} 台 / 10t車: {total_p/16.0:.1f} 台")
         
-        # PDFダウンロードボタン
         pdf_file = create_pdf(results, params, st.session_state.truck_img)
         st.download_button(
             label="📄 PDFレポートをダウンロード",
@@ -409,7 +432,6 @@ if st.session_state.get('calculated', False):
     st.markdown("---")
     st.subheader("詳細: パレット内訳")
 
-    # パレットごとの詳細表示
     for i, p_items in enumerate(results):
         with st.expander(f"パレット {i+1} (クリックで展開)", expanded=(i==0)):
             p_weight = sum([b['g'] + (b['child']['g'] if b['child'] else 0) for b in p_items])
