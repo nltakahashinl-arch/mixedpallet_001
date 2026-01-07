@@ -15,6 +15,37 @@ from reportlab.lib.utils import ImageReader
 # --- ページ設定 (ワイド表示) ---
 st.set_page_config(layout="wide", page_title="パレット積載シミュレーター")
 
+# ==========================================
+# 🔐 簡易ログイン機能
+# ==========================================
+def check_password():
+    """パスワード認証を行う関数"""
+    # サイドバーではなく、メイン画面の中央にログインボックスを出す
+    if 'authenticated' not in st.session_state:
+        st.session_state.authenticated = False
+
+    if not st.session_state.authenticated:
+        st.markdown("### 🔒 ログインが必要です")
+        password = st.text_input("パスワードを入力してください", type="password")
+        
+        # ▼▼ ここでパスワードを設定します（現在は '1234'） ▼▼
+        if st.button("ログイン"):
+            if password == "1234":  
+                st.session_state.authenticated = True
+                st.rerun()  # 画面をリロードしてメイン機能を表示
+            else:
+                st.error("パスワードが間違っています")
+        return False
+    return True
+
+# 認証チェック（通らなければここで処理をストップ）
+if not check_password():
+    st.stop()
+
+# ==========================================
+# 📦 以下、メインアプリのコード
+# ==========================================
+
 # --- フォント準備 (外部コマンドを使わずPython標準機能でDL) ---
 @st.cache_resource
 def setup_font():
@@ -273,6 +304,11 @@ def create_pdf(current_pallets, current_params, truck_img_bytes, input_products)
 # --------------------------------
 
 st.title("パレット積載シミュレーター")
+
+# ログアウトボタン（ログイン中のみ表示）
+if st.sidebar.button("ログアウト"):
+    st.session_state.authenticated = False
+    st.rerun()
 
 # デフォルト値
 defaults = [
