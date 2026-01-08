@@ -275,9 +275,8 @@ st.markdown("---")
 st.subheader("商品情報入力")
 st.info("💡 Excelからコピーして、表の左上のセルを選択し `Ctrl+V` で貼り付けられます。")
 
-# 初回のみデフォルトデータを定義 (15種類分用意)
-if 'df_products' not in st.session_state:
-    # 5種類の実データ + 10種類の空データ(0)を作成
+# デフォルトデータ生成関数
+def get_default_data():
     names = [f"商品{i+1}" for i in range(15)]
     ws = [320, 340, 300, 250, 400] + [0]*10
     ds = [300, 300, 340, 280, 350] + [0]*10
@@ -285,15 +284,36 @@ if 'df_products' not in st.session_state:
     gs = [6.0, 5.0, 8.0, 3.0, 6.0] + [0.0]*10
     ns = [35, 32, 53, 23, 30] + [0]*10
     
-    data = {
+    return pd.DataFrame({
         "商品名": names,
         "幅(mm)": ws,
         "奥行(mm)": ds,
         "高さ(mm)": hs,
         "重量(kg)": gs,
         "数量": ns
-    }
-    st.session_state.df_products = pd.DataFrame(data)
+    })
+
+# 初回のみデフォルトデータを定義
+if 'df_products' not in st.session_state:
+    st.session_state.df_products = get_default_data()
+
+# --- ボタンエリア ---
+col_btn1, col_btn2 = st.columns([1, 1])
+with col_btn1:
+    if st.button("🗑️ 全てクリア (入力を空にする)", use_container_width=True):
+        # 15行の空データでリセット
+        empty_data = {
+            "商品名": [f"商品{i+1}" for i in range(15)],
+            "幅(mm)": [0]*15, "奥行(mm)": [0]*15, "高さ(mm)": [0]*15,
+            "重量(kg)": [0.0]*15, "数量": [0]*15
+        }
+        st.session_state.df_products = pd.DataFrame(empty_data)
+        st.rerun()
+
+with col_btn2:
+    if st.button("🔄 サンプルデータに戻す", use_container_width=True):
+        st.session_state.df_products = get_default_data()
+        st.rerun()
 
 # データエディタの表示（行追加可能）
 edited_df = st.data_editor(
