@@ -15,36 +15,10 @@ from reportlab.lib.utils import ImageReader
 # --- ページ設定 (ワイド表示) ---
 st.set_page_config(layout="wide", page_title="パレット積載シミュレーター")
 
-# ==========================================
-# 🔐 簡易ログイン機能
-# ==========================================
-def check_password():
-    """パスワード認証を行う関数"""
-    # サイドバーではなく、メイン画面の中央にログインボックスを出す
-    if 'authenticated' not in st.session_state:
-        st.session_state.authenticated = False
-
-    if not st.session_state.authenticated:
-        st.markdown("### 🔒 ログインが必要です")
-        password = st.text_input("パスワードを入力してください", type="password")
-        
-        # ▼▼ ここでパスワードを設定します（現在は '1234'） ▼▼
-        if st.button("ログイン"):
-            if password == "1234":  
-                st.session_state.authenticated = True
-                st.rerun()  # 画面をリロードしてメイン機能を表示
-            else:
-                st.error("パスワードが間違っています")
-        return False
-    return True
-
-# 認証チェック（通らなければここで処理をストップ）
-if not check_password():
-    st.stop()
-
-# ==========================================
-# 📦 以下、メインアプリのコード
-# ==========================================
+# ログアウトボタン（ログイン中のみ表示）
+if st.sidebar.button("ログアウト"):
+    st.session_state.authenticated = False
+    st.rerun()
 
 # --- フォント準備 (外部コマンドを使わずPython標準機能でDL) ---
 @st.cache_resource
@@ -242,7 +216,7 @@ def create_pdf(current_pallets, current_params, truck_img_bytes, input_products)
     text_y -= 15
     c.drawString(40, text_y, f"Max {current_params['MAX_W']}kg / 許容: {current_params['OH']}mm")
 
-    # 入力商品情報の印字（PDF修正箇所）
+    # 入力商品情報の印字
     text_y -= 40
     c.drawString(40, text_y, "■ 入力商品情報")
     text_y -= 15
@@ -266,7 +240,7 @@ def create_pdf(current_pallets, current_params, truck_img_bytes, input_products)
     for i, p_items in enumerate(current_pallets):
         # 簡易的な改ページ判定
         img_h_pdf = 150
-        req_h = 15 + 15 + img_h_pdf + 20 # タイトル行 + 内訳行 + 画像 + マージン
+        req_h = 15 + 15 + img_h_pdf + 20 
         
         if y - req_h < margin_bottom:
             c.showPage()
@@ -304,11 +278,6 @@ def create_pdf(current_pallets, current_params, truck_img_bytes, input_products)
 # --------------------------------
 
 st.title("パレット積載シミュレーター")
-
-# ログアウトボタン（ログイン中のみ表示）
-if st.sidebar.button("ログアウト"):
-    st.session_state.authenticated = False
-    st.rerun()
 
 # デフォルト値
 defaults = [
@@ -348,6 +317,17 @@ st.markdown("##### 商品情報入力")
 colors = ['#ff9999', '#99ccff', '#99ff99', '#ffff99', '#cc99ff']
 products_data = []
 
+# 【修正箇所】ヘッダー行を追加して、どの列が何の値かわかるようにしました
+# レイアウト比率は下の入力欄と合わせています
+cols_head = st.columns([0.6, 1, 1, 1, 1, 1, 0.7])
+cols_head[0].markdown("") # 商品名用スペース（空）
+cols_head[1].markdown("**幅(mm)**")
+cols_head[2].markdown("**奥行(mm)**")
+cols_head[3].markdown("**高さ(mm)**")
+cols_head[4].markdown("**重量(kg)**")
+cols_head[5].markdown("**数量(個)**")
+cols_head[6].markdown("") # クリアボタン用スペース（空）
+
 # 各行をループで作成 (横並び配置)
 for i in range(5):
     # 行のレイアウト: [商品名] [幅] [奥] [高] [重] [数] [クリアボタン]
@@ -358,12 +338,11 @@ for i in range(5):
         st.markdown(f"**商品{i+1}**")
         st.markdown(f'<div style="background-color:{colors[i]}; height:5px; width:100%;"></div>', unsafe_allow_html=True)
 
-    # 入力フィールド (keyを使ってsession_stateと紐付け)
-    # on_changeで即時反映させるため、入力値はsession_stateから取得して更新
+    # 入力フィールド (ラベルは非表示にして、上のヘッダーで見せる)
     
     # 幅
     w = cols[1].number_input("幅", value=st.session_state.products[i]['w'], key=f"w_{i}", label_visibility="collapsed")
-    st.session_state.products[i]['w'] = w # 値を保存
+    st.session_state.products[i]['w'] = w 
     
     # 奥行
     d = cols[2].number_input("奥", value=st.session_state.products[i]['d'], key=f"d_{i}", label_visibility="collapsed")
@@ -409,7 +388,7 @@ if st.button("計算実行", type="primary", use_container_width=True):
     if not items:
         st.error("商品データが入力されていません。")
     else:
-        # --- 計算ロジック (ラボ版と同様) ---
+        # --- 計算ロジック ---
         blocks = []
         for p in items:
             layers = max(1, int(PH // p['h']))
