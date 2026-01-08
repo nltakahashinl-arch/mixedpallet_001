@@ -6,7 +6,7 @@ import io
 import os
 import urllib.request
 import zipfile
-import pandas as pd # 追加: データ処理用
+import pandas as pd
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfbase import pdfmetrics
@@ -271,19 +271,27 @@ with st.expander("パレット設定", expanded=True):
 
 st.markdown("---")
 
-# --- 2. 商品入力 (Excel貼り付け対応) ---
+# --- 2. 商品入力 (Excel貼り付け対応 / 15種類対応) ---
 st.subheader("商品情報入力")
 st.info("💡 Excelからコピーして、表の左上のセルを選択し `Ctrl+V` で貼り付けられます。")
 
-# 初回のみデフォルトデータを定義
+# 初回のみデフォルトデータを定義 (15種類分用意)
 if 'df_products' not in st.session_state:
+    # 5種類の実データ + 10種類の空データ(0)を作成
+    names = [f"商品{i+1}" for i in range(15)]
+    ws = [320, 340, 300, 250, 400] + [0]*10
+    ds = [300, 300, 340, 280, 350] + [0]*10
+    hs = [280, 250, 330, 220, 250] + [0]*10
+    gs = [6.0, 5.0, 8.0, 3.0, 6.0] + [0.0]*10
+    ns = [35, 32, 53, 23, 30] + [0]*10
+    
     data = {
-        "商品名": ["商品1", "商品2", "商品3", "商品4", "商品5"],
-        "幅(mm)": [320, 340, 300, 250, 400],
-        "奥行(mm)": [300, 300, 340, 280, 350],
-        "高さ(mm)": [280, 250, 330, 220, 250],
-        "重量(kg)": [6, 5, 8, 3, 6],
-        "数量": [35, 32, 53, 23, 30]
+        "商品名": names,
+        "幅(mm)": ws,
+        "奥行(mm)": ds,
+        "高さ(mm)": hs,
+        "重量(kg)": gs,
+        "数量": ns
     }
     st.session_state.df_products = pd.DataFrame(data)
 
@@ -295,10 +303,10 @@ edited_df = st.data_editor(
     hide_index=True,
     column_config={
         "商品名": st.column_config.TextColumn("商品名", width="medium", required=True),
-        "幅(mm)": st.column_config.NumberColumn("幅(mm)", min_value=1, format="%d"),
-        "奥行(mm)": st.column_config.NumberColumn("奥行(mm)", min_value=1, format="%d"),
-        "高さ(mm)": st.column_config.NumberColumn("高さ(mm)", min_value=1, format="%d"),
-        "重量(kg)": st.column_config.NumberColumn("重量(kg)", min_value=0.1, format="%.1f"),
+        "幅(mm)": st.column_config.NumberColumn("幅(mm)", min_value=0, format="%d"),
+        "奥行(mm)": st.column_config.NumberColumn("奥行(mm)", min_value=0, format="%d"),
+        "高さ(mm)": st.column_config.NumberColumn("高さ(mm)", min_value=0, format="%d"),
+        "重量(kg)": st.column_config.NumberColumn("重量(kg)", min_value=0.0, format="%.1f"),
         "数量": st.column_config.NumberColumn("数量", min_value=0, format="%d"),
     }
 )
@@ -313,7 +321,7 @@ if st.button("計算実行", type="primary", use_container_width=True):
     
     # データを整形
     items = []
-    colors = ['#ff9999', '#99ccff', '#99ff99', '#ffff99', '#cc99ff', '#ffa07a', '#87cefa'] # 色の候補
+    colors = ['#ff9999', '#99ccff', '#99ff99', '#ffff99', '#cc99ff', '#ffa07a', '#87cefa', '#f0e68c', '#dda0dd', '#90ee90'] # 色の候補
     
     # データフレームをループ処理
     for idx, row in edited_df.iterrows():
@@ -325,6 +333,7 @@ if st.button("計算実行", type="primary", use_container_width=True):
             g = float(row["重量(kg)"])
             n = int(row["数量"])
             
+            # 入力が0または空の場合はスキップ
             if n <= 0 or w <= 0:
                 continue
 
@@ -343,7 +352,7 @@ if st.button("計算実行", type="primary", use_container_width=True):
                 st.error(f"❌ {name} は単体重量オーバーのため除外されました。")
                 continue
             
-            # 色を割り当て (行番号でループ)
+            # 色を割り当て
             col = colors[idx % len(colors)]
             
             items.append({
