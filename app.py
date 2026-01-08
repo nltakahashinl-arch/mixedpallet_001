@@ -475,7 +475,8 @@ if st.session_state.get('calculated', False):
     st.subheader("詳細: パレット内訳")
 
     for i, p_items in enumerate(results):
-        with st.expander(f"パレット {i+1} (クリックで展開)", expanded=(i==0)):
+        # expanded=True に変更して、最初から全て開くようにしました
+        with st.expander(f"パレット {i+1}", expanded=True):
             p_weight = sum([b['g'] + (b['child']['g'] if b['child'] else 0) for b in p_items])
             cnt = {}
             for b in p_items:
