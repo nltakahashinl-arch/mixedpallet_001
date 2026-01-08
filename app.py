@@ -317,8 +317,7 @@ st.markdown("##### 商品情報入力")
 colors = ['#ff9999', '#99ccff', '#99ff99', '#ffff99', '#cc99ff']
 products_data = []
 
-# 【修正箇所】ヘッダー行を追加して、どの列が何の値かわかるようにしました
-# レイアウト比率は下の入力欄と合わせています
+# ヘッダー行 (項目名を表示)
 cols_head = st.columns([0.6, 1, 1, 1, 1, 1, 0.7])
 cols_head[0].markdown("") # 商品名用スペース（空）
 cols_head[1].markdown("**幅(mm)**")
@@ -378,15 +377,37 @@ if st.button("計算実行", type="primary", use_container_width=True):
     MAX_W, OH = pm_val, oh_val
     
     items = []
+    # 【追加機能】積載可否チェック
     for p in products_data:
-        if p['n'] > 0 and p['w'] > 0:
+        # 数量0はスキップ
+        if p['n'] <= 0:
+            continue
+
+        # 1. サイズチェック (幅と奥行き) ※回転も考慮
+        # (幅がPW以下 かつ 奥行がPD以下) または (幅がPD以下 かつ 奥行がPW以下) ならOK
+        can_fit_w_d = (p['w'] <= PW and p['d'] <= PD) or (p['w'] <= PD and p['d'] <= PW)
+        
+        # 2. 高さチェック
+        can_fit_h = p['h'] <= PH
+        
+        # 3. 重量チェック (単体重量が最大積載を超えていないか)
+        can_fit_weight = p['g'] <= MAX_W
+
+        if not can_fit_w_d:
+            st.error(f"❌ {p['name']} はサイズ(幅・奥行)がパレットより大きいため、計算から除外されました。")
+        elif not can_fit_h:
+            st.error(f"❌ {p['name']} は高さがパレットより高いため、計算から除外されました。")
+        elif not can_fit_weight:
+            st.error(f"❌ {p['name']} は単体重量がパレット最大積載量を超えているため、計算から除外されました。")
+        else:
+            # 問題なければ計算対象リストに追加
             items.append({
                 'name': p['name'], 'w': p['w'], 'd': p['d'], 'h': p['h'], 
                 'g': p['g'], 'n': p['n'], 'col': p['col'], 'p_id': p['id']
             })
 
     if not items:
-        st.error("商品データが入力されていません。")
+        st.error("計算可能な商品データがありません。（未入力、または全商品がサイズオーバーです）")
     else:
         # --- 計算ロジック ---
         blocks = []
