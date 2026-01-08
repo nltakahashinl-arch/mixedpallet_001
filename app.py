@@ -6,6 +6,7 @@ import io
 import os
 import urllib.request
 import zipfile
+import pandas as pd # 追加: データ処理用
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfbase import pdfmetrics
@@ -15,12 +16,12 @@ from reportlab.lib.utils import ImageReader
 # --- ページ設定 (ワイド表示) ---
 st.set_page_config(layout="wide", page_title="パレット積載シミュレーター")
 
-# ログアウトボタン（ログイン中のみ表示）
+# ログアウトボタン
 if st.sidebar.button("ログアウト"):
     st.session_state.authenticated = False
     st.rerun()
 
-# --- フォント準備 (外部コマンドを使わずPython標準機能でDL) ---
+# --- フォント準備 ---
 @st.cache_resource
 def setup_font():
     font_path = "ipaexg.ttf"
@@ -28,7 +29,6 @@ def setup_font():
         url = "https://moji.or.jp/wp-content/ipafont/IPAexfont/ipaexg00401.zip"
         zip_name = "ipaexg00401.zip"
         try:
-            # wgetの代わりにurllibを使用
             urllib.request.urlretrieve(url, zip_name)
             with zipfile.ZipFile(zip_name, 'r') as z:
                 z.extractall(".")
@@ -36,9 +36,8 @@ def setup_font():
             if os.path.exists(extracted_path):
                 os.replace(extracted_path, font_path)
         except Exception:
-            pass # エラー時はデフォルトフォントへ
+            pass
     
-    # Matplotlibへの登録
     if os.path.exists(font_path):
         fm.fontManager.addfont(font_path)
         plt.rc('font', family='IPAexGothic')
@@ -47,11 +46,9 @@ def setup_font():
 
 font_file = setup_font()
 
-# --- トラック描画関数 (背景白固定) ---
+# --- トラック描画関数 ---
 def create_horizontal_trucks_figure(num_pallets):
-    # figsizeをラボ版に近い比率に
     fig, ax = plt.subplots(2, 1, figsize=(6, 3))
-    # 背景を白に固定（ダークモード対策）
     fig.patch.set_facecolor('white')
 
     SCALE = 1/100
@@ -68,7 +65,7 @@ def create_horizontal_trucks_figure(num_pallets):
     LIMIT_Y_MAX = TRUCK_W_BODY + 20
 
     def draw_truck_h(ax_obj, truck_type, max_p, current_p):
-        ax_obj.set_facecolor('white') # 軸背景も白
+        ax_obj.set_facecolor('white')
         if truck_type == '4t':
             TRUCK_L = 6200 * SCALE
             color_cab = '#87CEEB'
@@ -84,25 +81,21 @@ def create_horizontal_trucks_figure(num_pallets):
         ax_obj.axis('off')
         ax_obj.set_title(label, fontsize=10, fontweight='bold', loc='left', color='black')
 
-        # キャビン
         ax_obj.add_patch(patches.FancyBboxPatch((-CABIN_L, 0), CABIN_L-2, TRUCK_W_BODY, boxstyle="round,pad=0.2", fc='white', ec='black', lw=1.0))
         ax_obj.add_patch(patches.Rectangle((-CABIN_L + 2, 2), 8, TRUCK_W_BODY-4, fc=color_cab, ec='black'))
         ax_obj.plot([-CABIN_L+5, -CABIN_L+5], [TRUCK_W_BODY, TRUCK_W_BODY+3], color='black', lw=1.5)
         ax_obj.plot([-CABIN_L+5, -CABIN_L+5], [0, -3], color='black', lw=1.5)
 
-        # 荷台
         ax_obj.add_patch(patches.Rectangle((0, 0), TRUCK_L, TRUCK_W_BODY, fc='#F5F5F5', ec='black', lw=1.0))
         ax_obj.plot([0, TRUCK_L], [TRUCK_W_BODY+3, TRUCK_W_BODY+3], color='silver', linestyle='--')
         ax_obj.plot([0, TRUCK_L], [-3, -3], color='silver', linestyle='--')
 
-        # タイヤ
         tire_w = 12; tire_h = 6
         tire_x = [-CABIN_L + 15, TRUCK_L - 15] if truck_type == '4t' else [-CABIN_L + 15, TRUCK_L - 25, TRUCK_L - 12]
         for tx in tire_x:
             ax_obj.add_patch(patches.Rectangle((tx, TRUCK_W_BODY), tire_w, tire_h, fc='#333333', ec='black'))
             ax_obj.add_patch(patches.Rectangle((tx, -tire_h), tire_w, tire_h, fc='#333333', ec='black'))
 
-        # パレット
         for i in range(max_p):
             c_idx = i % 2; r_idx = i // 2
             px = MARGIN + (r_idx * (PALLET_D + MARGIN))
@@ -123,11 +116,8 @@ def create_horizontal_trucks_figure(num_pallets):
 def draw_pallet_figure(PW, PD, PH, p_items, figsize=(18, 5)):
     fig, ax = plt.subplots(1, 3, figsize=figsize)
     fig.patch.set_facecolor('white')
-    
-    # 共通設定
     for a in ax: a.set_facecolor('white')
 
-    # 1. 上面図
     ax[0].set_aspect('equal')
     ax[0].add_patch(patches.Rectangle((0,0), PW, PD, fill=False, lw=2))
     sorted_items = sorted(p_items, key=lambda x: x.get('z', 0))
@@ -139,7 +129,6 @@ def draw_pallet_figure(PW, PD, PH, p_items, figsize=(18, 5)):
     ax[0].set_xlim(-50, PW+50); ax[0].set_ylim(-50, PD+50); ax[0].invert_yaxis()
     ax[0].set_title("① 上面図", color='black')
     
-    # 2. 正面図
     ax[1].add_patch(patches.Rectangle((0,0), PW, PH, fill=False, lw=2))
     for b in p_items:
         z_base = b.get('z', 0)
@@ -155,7 +144,6 @@ def draw_pallet_figure(PW, PD, PH, p_items, figsize=(18, 5)):
     ax[1].set_xlim(-50, PW+50); ax[1].set_ylim(0, PH+100)
     ax[1].set_title("② 正面図", color='black')
 
-    # 3. 側面図
     ax[2].add_patch(patches.Rectangle((0,0), PD, PH, fill=False, lw=2))
     for b in p_items:
         z_base = b.get('z', 0)
@@ -186,11 +174,9 @@ def create_pdf(current_pallets, current_params, truck_img_bytes, input_products)
     c = canvas.Canvas(buffer, pagesize=A4)
     w_a4, h_a4 = A4
 
-    # タイトル
     c.setFont(font_name, 20)
     c.drawString(40, h_a4 - 50, "パレット積載シミュレーション報告書")
 
-    # トラック画像
     disp_h = 0
     if truck_img_bytes:
         truck_img_bytes.seek(0)
@@ -201,7 +187,6 @@ def create_pdf(current_pallets, current_params, truck_img_bytes, input_products)
         disp_h = disp_w * aspect
         c.drawImage(img, w_a4 - disp_w - 20, h_a4 - 50 - disp_h - 10, width=disp_w, height=disp_h, preserveAspectRatio=True)
 
-    # サマリー
     c.setFont(font_name, 12)
     total_p = len(current_pallets)
     truck_4t = total_p / 10.0
@@ -216,7 +201,6 @@ def create_pdf(current_pallets, current_params, truck_img_bytes, input_products)
     text_y -= 15
     c.drawString(40, text_y, f"Max {current_params['MAX_W']}kg / 許容: {current_params['OH']}mm")
 
-    # 入力商品情報の印字
     text_y -= 40
     c.drawString(40, text_y, "■ 入力商品情報")
     text_y -= 15
@@ -227,18 +211,15 @@ def create_pdf(current_pallets, current_params, truck_img_bytes, input_products)
             c.drawString(50, text_y, txt)
             text_y -= 12
 
-    # 詳細図配置
     bottom_of_truck = h_a4 - 50 - disp_h - 10
     start_y_p1 = min(text_y - 40, bottom_of_truck - 30)
     y = start_y_p1
     
-    # ページ下端チェック用
     margin_bottom = 50
 
     PW = current_params['PW']; PD = current_params['PD']; PH = current_params['PH']
 
     for i, p_items in enumerate(current_pallets):
-        # 簡易的な改ページ判定
         img_h_pdf = 150
         req_h = 15 + 15 + img_h_pdf + 20 
         
@@ -274,99 +255,53 @@ def create_pdf(current_pallets, current_params, truck_img_bytes, input_products)
     return buffer
 
 # --------------------------------
-# メイン UI (ラボ版レイアウトの再現)
+# メイン UI
 # --------------------------------
 
-st.title("パレット積載シミュレーター")
+st.title("📦 パレット積載シミュレーター")
 
-# デフォルト値
-defaults = [
-    (320, 300, 280, 6, 35),
-    (340, 300, 250, 5, 32),
-    (300, 340, 330, 8, 53),
-    (250, 280, 220, 3, 23),
-    (400, 350, 250, 6, 30)
-]
-
-# Session State初期化
-if 'products' not in st.session_state:
-    st.session_state.products = []
-    for i in range(5):
-        st.session_state.products.append({
-            'w': defaults[i][0], 'd': defaults[i][1], 'h': defaults[i][2],
-            'g': defaults[i][3], 'n': defaults[i][4]
-        })
-
-# クリアボタンのコールバック
-def clear_row(idx):
-    st.session_state.products[idx] = {'w':0, 'd':0, 'h':0, 'g':0, 'n':0}
-
-# --- 1. パレット設定 (横一列) ---
-st.markdown("##### 📦 パレット設定 (mm)")
-c_pw, c_pd, c_ph, c_pm, c_oh = st.columns(5)
-pw_val = c_pw.number_input("幅", value=1100, step=10)
-pd_val = c_pd.number_input("奥行", value=1100, step=10)
-ph_val = c_ph.number_input("高さ", value=1700, step=10)
-pm_val = c_pm.number_input("Max重量(kg)", value=1000, step=10)
-oh_val = c_oh.number_input("重ね積み許容(mm)", value=30, step=5)
+# --- 1. パレット設定 ---
+with st.expander("パレット設定", expanded=True):
+    c_pw, c_pd, c_ph, c_pm, c_oh = st.columns(5)
+    pw_val = c_pw.number_input("幅 (mm)", value=1100, step=10)
+    pd_val = c_pd.number_input("奥行 (mm)", value=1100, step=10)
+    ph_val = c_ph.number_input("高さ (mm)", value=1700, step=10)
+    pm_val = c_pm.number_input("Max重量(kg)", value=1000, step=10)
+    oh_val = c_oh.number_input("重ね積み許容(mm)", value=30, step=5)
 
 st.markdown("---")
 
-# --- 2. 商品入力 (ラボ版と同じ「行」構成) ---
-st.markdown("##### 商品情報入力")
-colors = ['#ff9999', '#99ccff', '#99ff99', '#ffff99', '#cc99ff']
-products_data = []
+# --- 2. 商品入力 (Excel貼り付け対応) ---
+st.subheader("商品情報入力")
+st.info("💡 Excelからコピーして、表の左上のセルを選択し `Ctrl+V` で貼り付けられます。")
 
-# ヘッダー行 (項目名を表示)
-cols_head = st.columns([0.6, 1, 1, 1, 1, 1, 0.7])
-cols_head[0].markdown("") # 商品名用スペース（空）
-cols_head[1].markdown("**幅(mm)**")
-cols_head[2].markdown("**奥行(mm)**")
-cols_head[3].markdown("**高さ(mm)**")
-cols_head[4].markdown("**重量(kg)**")
-cols_head[5].markdown("**数量(個)**")
-cols_head[6].markdown("") # クリアボタン用スペース（空）
+# 初回のみデフォルトデータを定義
+if 'df_products' not in st.session_state:
+    data = {
+        "商品名": ["商品1", "商品2", "商品3", "商品4", "商品5"],
+        "幅(mm)": [320, 340, 300, 250, 400],
+        "奥行(mm)": [300, 300, 340, 280, 350],
+        "高さ(mm)": [280, 250, 330, 220, 250],
+        "重量(kg)": [6, 5, 8, 3, 6],
+        "数量": [35, 32, 53, 23, 30]
+    }
+    st.session_state.df_products = pd.DataFrame(data)
 
-# 各行をループで作成 (横並び配置)
-for i in range(5):
-    # 行のレイアウト: [商品名] [幅] [奥] [高] [重] [数] [クリアボタン]
-    # 比率調整: ラベルは少し狭く、数値入力は均等、ボタンは狭く
-    cols = st.columns([0.6, 1, 1, 1, 1, 1, 0.7])
-    
-    with cols[0]:
-        st.markdown(f"**商品{i+1}**")
-        st.markdown(f'<div style="background-color:{colors[i]}; height:5px; width:100%;"></div>', unsafe_allow_html=True)
-
-    # 入力フィールド (ラベルは非表示にして、上のヘッダーで見せる)
-    
-    # 幅
-    w = cols[1].number_input("幅", value=st.session_state.products[i]['w'], key=f"w_{i}", label_visibility="collapsed")
-    st.session_state.products[i]['w'] = w 
-    
-    # 奥行
-    d = cols[2].number_input("奥", value=st.session_state.products[i]['d'], key=f"d_{i}", label_visibility="collapsed")
-    st.session_state.products[i]['d'] = d
-    
-    # 高さ
-    h = cols[3].number_input("高", value=st.session_state.products[i]['h'], key=f"h_{i}", label_visibility="collapsed")
-    st.session_state.products[i]['h'] = h
-    
-    # 重量
-    g = cols[4].number_input("重", value=st.session_state.products[i]['g'], key=f"g_{i}", label_visibility="collapsed")
-    st.session_state.products[i]['g'] = g
-    
-    # 数量
-    n = cols[5].number_input("数", value=st.session_state.products[i]['n'], key=f"n_{i}", label_visibility="collapsed")
-    st.session_state.products[i]['n'] = n
-    
-    # クリアボタン
-    with cols[6]:
-        st.button("クリア", key=f"clr_{i}", on_click=clear_row, args=(i,))
-
-    products_data.append({
-        'name': f"商品{i+1}", 'w': w, 'd': d, 'h': h, 'g': g, 'n': n, 
-        'col': colors[i], 'id': i
-    })
+# データエディタの表示（行追加可能）
+edited_df = st.data_editor(
+    st.session_state.df_products,
+    num_rows="dynamic",
+    use_container_width=True,
+    hide_index=True,
+    column_config={
+        "商品名": st.column_config.TextColumn("商品名", width="medium", required=True),
+        "幅(mm)": st.column_config.NumberColumn("幅(mm)", min_value=1, format="%d"),
+        "奥行(mm)": st.column_config.NumberColumn("奥行(mm)", min_value=1, format="%d"),
+        "高さ(mm)": st.column_config.NumberColumn("高さ(mm)", min_value=1, format="%d"),
+        "重量(kg)": st.column_config.NumberColumn("重量(kg)", min_value=0.1, format="%.1f"),
+        "数量": st.column_config.NumberColumn("数量", min_value=0, format="%d"),
+    }
+)
 
 st.markdown("---")
 
@@ -376,35 +311,49 @@ if st.button("計算実行", type="primary", use_container_width=True):
     PW, PD, PH = pw_val, pd_val, ph_val
     MAX_W, OH = pm_val, oh_val
     
+    # データを整形
     items = []
-    # 【追加機能】積載可否チェック
-    for p in products_data:
-        # 数量0はスキップ
-        if p['n'] <= 0:
-            continue
+    colors = ['#ff9999', '#99ccff', '#99ff99', '#ffff99', '#cc99ff', '#ffa07a', '#87cefa'] # 色の候補
+    
+    # データフレームをループ処理
+    for idx, row in edited_df.iterrows():
+        try:
+            name = str(row["商品名"])
+            w = int(row["幅(mm)"])
+            d = int(row["奥行(mm)"])
+            h = int(row["高さ(mm)"])
+            g = float(row["重量(kg)"])
+            n = int(row["数量"])
+            
+            if n <= 0 or w <= 0:
+                continue
 
-        # 1. サイズチェック (幅と奥行き) ※回転も考慮
-        # (幅がPW以下 かつ 奥行がPD以下) または (幅がPD以下 かつ 奥行がPW以下) ならOK
-        can_fit_w_d = (p['w'] <= PW and p['d'] <= PD) or (p['w'] <= PD and p['d'] <= PW)
-        
-        # 2. 高さチェック
-        can_fit_h = p['h'] <= PH
-        
-        # 3. 重量チェック (単体重量が最大積載を超えていないか)
-        can_fit_weight = p['g'] <= MAX_W
+            # 積載チェック
+            can_fit_w_d = (w <= PW and d <= PD) or (w <= PD and d <= PW)
+            can_fit_h = h <= PH
+            can_fit_weight = g <= MAX_W
 
-        if not can_fit_w_d:
-            st.error(f"❌ {p['name']} はサイズ(幅・奥行)がパレットより大きいため、計算から除外されました。")
-        elif not can_fit_h:
-            st.error(f"❌ {p['name']} は高さがパレットより高いため、計算から除外されました。")
-        elif not can_fit_weight:
-            st.error(f"❌ {p['name']} は単体重量がパレット最大積載量を超えているため、計算から除外されました。")
-        else:
-            # 問題なければ計算対象リストに追加
+            if not can_fit_w_d:
+                st.error(f"❌ {name} はサイズ(幅・奥行)がパレットより大きいため除外されました。")
+                continue
+            elif not can_fit_h:
+                st.error(f"❌ {name} は高さがパレットより高いため除外されました。")
+                continue
+            elif not can_fit_weight:
+                st.error(f"❌ {name} は単体重量オーバーのため除外されました。")
+                continue
+            
+            # 色を割り当て (行番号でループ)
+            col = colors[idx % len(colors)]
+            
             items.append({
-                'name': p['name'], 'w': p['w'], 'd': p['d'], 'h': p['h'], 
-                'g': p['g'], 'n': p['n'], 'col': p['col'], 'p_id': p['id']
+                'name': name, 'w': w, 'd': d, 'h': h, 
+                'g': g, 'n': n, 'col': col, 'id': idx
             })
+
+        except ValueError:
+            # 空行や数値以外が入っている場合のスキップ処理
+            continue
 
     if not items:
         st.error("計算可能な商品データがありません。（未入力、または全商品がサイズオーバーです）")
@@ -417,9 +366,9 @@ if st.button("計算実行", type="primary", use_container_width=True):
             rem = int(p['n'] % layers)
             g_t, h_t = layers * p['g'], layers * p['h']
             for _ in range(full): 
-                blocks.append({'name':p['name'], 'w':p['w'], 'd':p['d'], 'h':p['h'], 'ly':layers, 'g':g_t, 'col':p['col'], 'h_total':h_t, 'child':None, 'z':0, 'p_id':p['p_id']})
+                blocks.append({'name':p['name'], 'w':p['w'], 'd':p['d'], 'h':p['h'], 'ly':layers, 'g':g_t, 'col':p['col'], 'h_total':h_t, 'child':None, 'z':0, 'p_id':p['id']})
             if rem > 0: 
-                blocks.append({'name':p['name'], 'w':p['w'], 'd':p['d'], 'h':p['h'], 'ly':rem, 'g':rem*p['g'], 'col':p['col'], 'h_total':rem*p['h'], 'child':None, 'z':0, 'p_id':p['p_id']})
+                blocks.append({'name':p['name'], 'w':p['w'], 'd':p['d'], 'h':p['h'], 'ly':rem, 'g':rem*p['g'], 'col':p['col'], 'h_total':rem*p['h'], 'child':None, 'z':0, 'p_id':p['id']})
 
         blocks.sort(key=lambda x: (x['p_id'], -x['w']*x['d'], -x['h_total']))
         merged_indices = set()
@@ -472,7 +421,6 @@ if st.session_state.get('calculated', False):
     
     st.markdown("### 📊 計算結果")
     
-    # トラック図（白背景）
     fig_truck = create_horizontal_trucks_figure(total_p)
     img_buf = io.BytesIO()
     fig_truck.savefig(img_buf, format='png', bbox_inches='tight', dpi=300, facecolor='white')
