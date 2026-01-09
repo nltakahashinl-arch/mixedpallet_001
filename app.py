@@ -277,11 +277,30 @@ st.info("💡 Excelからコピーして、表の左上のセルを選択し `Ct
 if 'editor_key' not in st.session_state:
     st.session_state.editor_key = 0
 
-# まっさらな空データ生成関数 (15行全て空)
-# 以前の「53, 23, 30」などの数値は完全に削除しました
+# デフォルトデータ生成 (すべて文字列として定義)
+def get_default_data():
+    names = [f"商品{i+1}" for i in range(15)]
+    ws = [300]*5 + [0]*10
+    ds = [300]*5 + [0]*10
+    hs = [200]*5 + [0]*10
+    gs = [5.0]*5 + [0.0]*10
+    ns = [10]*5 + [0]*10
+    
+    # 全列をObject型(何でもあり)で作成
+    df = pd.DataFrame({
+        "商品名": pd.Series(names, dtype="object"),
+        "幅(mm)": pd.Series(ws, dtype="int"),
+        "奥行(mm)": pd.Series(ds, dtype="int"),
+        "高さ(mm)": pd.Series(hs, dtype="int"),
+        "重量(kg)": pd.Series(gs, dtype="float"),
+        "数量": pd.Series(ns, dtype="int")
+    })
+    return df
+
+# 空データ生成
 def get_empty_data():
     df = pd.DataFrame({
-        "商品名": pd.Series([""] * 15, dtype="str"), # 文字列型を強制
+        "商品名": pd.Series([""] * 15, dtype="object"),
         "幅(mm)": pd.Series([0]*15, dtype="int"),
         "奥行(mm)": pd.Series([0]*15, dtype="int"),
         "高さ(mm)": pd.Series([0]*15, dtype="int"),
@@ -290,22 +309,29 @@ def get_empty_data():
     })
     return df
 
-# 初回初期化 (いきなり空データで開始)
+# 初回初期化
 if 'df_products' not in st.session_state:
-    st.session_state.df_products = get_empty_data()
+    st.session_state.df_products = get_default_data()
 
 # --- ボタンエリア ---
 col_btn1, col_btn2 = st.columns([1, 1])
 with col_btn1:
     if st.button("🗑️ 全てクリア (入力を空にする)", use_container_width=True):
-        # Session Stateを削除して強制リフレッシュ
-        del st.session_state['df_products']
         st.session_state.df_products = get_empty_data()
         st.session_state.editor_key += 1
         st.rerun()
 
+with col_btn2:
+    if st.button("🔄 サンプルデータに戻す", use_container_width=True):
+        st.session_state.df_products = get_default_data()
+        st.session_state.editor_key += 1
+        st.rerun()
+
+# --- 【重要】表示直前に型をobject型に強制変換 ---
+# これで数字の入った文字列も「文字」として扱われる
+st.session_state.df_products["商品名"] = st.session_state.df_products["商品名"].astype("object")
+
 # データエディタ
-# column_orderを指定して、貼り付け時の列ズレを防ぐ
 column_order = ["商品名", "幅(mm)", "奥行(mm)", "高さ(mm)", "重量(kg)", "数量"]
 
 edited_df = st.data_editor(
@@ -314,14 +340,14 @@ edited_df = st.data_editor(
     num_rows="dynamic",
     use_container_width=True,
     hide_index=True,
-    column_order=column_order, # 列順序を固定
+    column_order=column_order,
     column_config={
         "商品名": st.column_config.TextColumn(
             "商品名", 
             width="large", 
             required=True,
             default="",
-            validate="^.*$" # どんな文字も許容
+            validate="^.*$" # 全ての文字を許容
         ),
         "幅(mm)": st.column_config.NumberColumn("幅(mm)", min_value=0, format="%d"),
         "奥行(mm)": st.column_config.NumberColumn("奥行(mm)", min_value=0, format="%d"),
@@ -343,9 +369,8 @@ if st.button("計算実行", type="primary", use_container_width=True):
     
     for idx, row in edited_df.iterrows():
         try:
-            # 商品名を文字列として取得
             name = str(row["商品名"])
-            if not name or name == "nan": continue
+            if not name or name == "nan" or not name.strip(): continue
                 
             w = int(row["幅(mm)"])
             d = int(row["奥行(mm)"])
@@ -433,7 +458,7 @@ if st.button("計算実行", type="primary", use_container_width=True):
 
         st.session_state.results = [ps['items'] for ps in pallet_states]
         st.session_state.params = {'PW':PW, 'PD':PD, 'PH':PH, 'MAX_W':MAX_W, 'OH':OH}
-        st.session_state.input_products = items
+        st.session_state.input_products = items # PDF用
         st.session_state.calculated = True
 
 # --- 結果表示 ---
@@ -473,11 +498,4 @@ if st.session_state.get('calculated', False):
             p_weight = sum([b['g'] + (b['child']['g'] if b['child'] else 0) for b in p_items])
             cnt = {}
             for b in p_items:
-                cnt[b['name']] = cnt.get(b['name'], 0) + b['ly']
-                if b['child']: cnt[b['child']['name']] = cnt.get(b['child']['name'], 0) + b['child']['ly']
-            d_str = ", ".join([f"{k}:{v}個" for k,v in cnt.items()])
-            
-            st.markdown(f"**重量: {p_weight}kg** | 内訳: {d_str}")
-            
-            fig = draw_pallet_figure(params['PW'], params['PD'], params['PH'], p_items)
-            st.pyplot(fig)
+                cnt[b['name']] = cnt
