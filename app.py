@@ -110,12 +110,20 @@ def create_horizontal_trucks_figure(num_pallets):
     plt.tight_layout()
     return fig
 
-# --- パレット詳細図描画 ---
+# --- 【修正】パレット詳細図描画 (奥の箱を点線にする機能を追加) ---
 def draw_pallet_figure(PW, PD, PH, p_items, figsize=(18, 5)):
     fig, ax = plt.subplots(1, 3, figsize=figsize)
     fig.patch.set_facecolor('white')
     for a in ax: a.set_facecolor('white')
 
+    # 最前面の座標を取得（奥行き判定用）
+    if p_items:
+        min_y = min([b['y'] for b in p_items]) # 正面図用：一番手前のY座標
+        min_x = min([b['x'] for b in p_items]) # 側面図用：一番手前のX座標
+    else:
+        min_y = 0; min_x = 0
+
+    # 1. 上面図
     ax[0].set_aspect('equal')
     ax[0].add_patch(patches.Rectangle((0,0), PW, PD, fill=False, lw=2))
     sorted_items = sorted(p_items, key=lambda x: x.get('z', 0))
@@ -127,35 +135,57 @@ def draw_pallet_figure(PW, PD, PH, p_items, figsize=(18, 5)):
     ax[0].set_xlim(-50, PW+50); ax[0].set_ylim(-50, PD+50); ax[0].invert_yaxis()
     ax[0].set_title("① 上面図", color='black')
     
+    # 2. 正面図 (奥行き Y で点線判定)
     ax[1].add_patch(patches.Rectangle((0,0), PW, PH, fill=False, lw=2))
     for b in p_items:
         z_base = b.get('z', 0)
+        # 最前面(min_y)より奥にある場合は点線にする
+        is_front = (b['y'] <= min_y + 10) # 誤差許容
+        ls = '-' if is_front else '--' # 実線 or 点線
+        lw = 1.5 if is_front else 1.0  # 手前は太く、奥は細く
+
         for ly in range(b['ly']):
             y_pos = z_base + ly * b['h']
-            ax[1].add_patch(patches.Rectangle((b['x'], y_pos), b['w'], b['h'], facecolor=b['col'], edgecolor='black', alpha=0.5))
+            ax[1].add_patch(patches.Rectangle((b['x'], y_pos), b['w'], b['h'], 
+                facecolor=b['col'], edgecolor='black', alpha=0.5, linestyle=ls, lw=lw))
+        
         ax[1].text(b['x'] + b['w']/2, z_base + b['h_total']/2, b['name'], ha='center', va='center', fontsize=8, color='black')
+        
         if b.get('child'):
             c_blk = b['child']; c_base = z_base + b['h_total']
             for ly in range(c_blk['ly']):
                 y_pos = c_base + ly * c_blk['h']
-                ax[1].add_patch(patches.Rectangle((b['x'], y_pos), c_blk['w'], c_blk['h'], facecolor=c_blk['col'], edgecolor='black', alpha=0.5))
-    ax[1].set_xlim(-50, PW+50); ax[1].set_ylim(0, PH+100)
-    ax[1].set_title("② 正面図", color='black')
+                ax[1].add_patch(patches.Rectangle((b['x'], y_pos), c_blk['w'], c_blk['h'], 
+                    facecolor=c_blk['col'], edgecolor='black', alpha=0.5, linestyle=ls, lw=lw))
 
+    ax[1].set_xlim(-50, PW+50); ax[1].set_ylim(0, PH+100)
+    ax[1].set_title("② 正面図 (奥は点線)", color='black')
+
+    # 3. 側面図 (幅 X で点線判定)
     ax[2].add_patch(patches.Rectangle((0,0), PD, PH, fill=False, lw=2))
     for b in p_items:
         z_base = b.get('z', 0)
+        # 最前面(min_x)より奥にある場合は点線にする
+        is_front_side = (b['x'] <= min_x + 10)
+        ls = '-' if is_front_side else '--'
+        lw = 1.5 if is_front_side else 1.0
+
         for ly in range(b['ly']):
             y_pos = z_base + ly * b['h']
-            ax[2].add_patch(patches.Rectangle((b['y'], y_pos), b['d'], b['h'], facecolor=b['col'], edgecolor='black', alpha=0.5))
+            ax[2].add_patch(patches.Rectangle((b['y'], y_pos), b['d'], b['h'], 
+                facecolor=b['col'], edgecolor='black', alpha=0.5, linestyle=ls, lw=lw))
+        
         ax[2].text(b['y'] + b['d']/2, z_base + b['h_total']/2, b['name'], ha='center', va='center', fontsize=8, color='black')
+        
         if b.get('child'):
             c_blk = b['child']; c_base = z_base + b['h_total']
             for ly in range(c_blk['ly']):
                 y_pos = c_base + ly * c_blk['h']
-                ax[2].add_patch(patches.Rectangle((b['y'], y_pos), c_blk['w'], c_blk['h'], facecolor=c_blk['col'], edgecolor='black', alpha=0.5))
+                ax[2].add_patch(patches.Rectangle((b['y'], y_pos), c_blk['w'], c_blk['h'], 
+                    facecolor=c_blk['col'], edgecolor='black', alpha=0.5, linestyle=ls, lw=lw))
+
     ax[2].set_xlim(-50, PD+50); ax[2].set_ylim(0, PH+100)
-    ax[2].set_title("③ 側面図", color='black')
+    ax[2].set_title("③ 側面図 (奥は点線)", color='black')
     
     plt.tight_layout()
     return fig
@@ -277,11 +307,10 @@ st.info("💡 Excelからコピーして、表の左上のセルを選択し `Ct
 if 'editor_key' not in st.session_state:
     st.session_state.editor_key = 0
 
-# --- 【修正】数字の入っていないクリーンな初期データ ---
-# 以前の「53, 23...」などの数字はここで完全に削除しました。
+# 空データ生成
 def get_empty_data():
     df = pd.DataFrame({
-        "商品名": pd.Series([""] * 15, dtype="str"), # 文字列型を強制
+        "商品名": pd.Series([""] * 15, dtype="str"),
         "幅(mm)": pd.Series([0]*15, dtype="int"),
         "奥行(mm)": pd.Series([0]*15, dtype="int"),
         "高さ(mm)": pd.Series([0]*15, dtype="int"),
@@ -290,7 +319,7 @@ def get_empty_data():
     })
     return df
 
-# 初回初期化 (いきなり空データで開始)
+# 初回初期化
 if 'df_products' not in st.session_state:
     st.session_state.df_products = get_empty_data()
 
@@ -298,13 +327,12 @@ if 'df_products' not in st.session_state:
 col_btn1, col_btn2 = st.columns([1, 1])
 with col_btn1:
     if st.button("🗑️ 全てクリア (入力を空にする)", use_container_width=True):
-        # Session Stateを削除して強制リフレッシュ
         del st.session_state['df_products']
         st.session_state.df_products = get_empty_data()
         st.session_state.editor_key += 1
         st.rerun()
 
-# --- 【重要】表示直前に型をstr型に強制変換 ---
+# 型の再強制
 st.session_state.df_products["商品名"] = st.session_state.df_products["商品名"].astype(str)
 
 # データエディタ
