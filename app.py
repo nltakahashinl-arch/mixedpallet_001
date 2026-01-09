@@ -110,22 +110,19 @@ def create_horizontal_trucks_figure(num_pallets):
     plt.tight_layout()
     return fig
 
-# --- 【大改造】パレット詳細図描画 (5面図) ---
-def draw_pallet_figure(PW, PD, PH, p_items, figsize=(18, 8)): # 高さを少し増やしました
+# --- パレット詳細図描画 (5面図) ---
+def draw_pallet_figure(PW, PD, PH, p_items, figsize=(18, 8)):
     fig = plt.figure(figsize=figsize)
     fig.patch.set_facecolor('white')
     
-    # GridSpecでレイアウト作成 (2行3列)
-    # 左側(0列目)は上下結合して大きく使う
     gs = fig.add_gridspec(2, 3, width_ratios=[1.2, 1, 1], height_ratios=[1, 1])
 
-    # 1. 上面図 (左側大きく)
+    # 1. 上面図
     ax_top = fig.add_subplot(gs[:, 0])
     ax_top.set_facecolor('white')
     ax_top.set_aspect('equal')
     ax_top.add_patch(patches.Rectangle((0,0), PW, PD, fill=False, lw=2))
     
-    # 上面図: 下から順に描画
     sorted_items_z = sorted(p_items, key=lambda x: x.get('z', 0))
     for b in sorted_items_z:
         ax_top.add_patch(patches.Rectangle((b['x'], b['y']), b['w'], b['d'], facecolor=b['col'], edgecolor='black', alpha=0.9))
@@ -135,44 +132,31 @@ def draw_pallet_figure(PW, PD, PH, p_items, figsize=(18, 8)): # 高さを少し�
     ax_top.set_xlim(-50, PW+50); ax_top.set_ylim(-50, PD+50); ax_top.invert_yaxis()
     ax_top.set_title("① 上面図 (Top)", color='black', fontsize=12, fontweight='bold')
 
-    # 共通描画関数 (側面用)
+    # 共通描画関数
     def plot_side_view(ax, axis_h, axis_v, items, sort_key, reverse_sort, title, label_func):
         ax.set_facecolor('white')
-        
-        # 枠線
         limit_h = PW if axis_h == 'x' else PD
         ax.add_patch(patches.Rectangle((0,0), limit_h, PH, fill=False, lw=2))
-        
-        # 描画順序 (手前のものが後に描画されるようにソート)
-        # reverse=False (昇順): 小さい値(手前)から描画 → 奥が上書きされる(NG)
-        # reverse=True (降順): 大きい値(奥)から描画 → 手前が上書きされる(OK)
-        # ※視点によって「手前」の定義が変わる
-        
-        # 正面(Y=0から見る): Yが大きい順(奥) -> Yが小さい順(手前) に描画したい => reverse=True
-        # 背面(Y=Maxから見る): Yが小さい順(奥) -> Yが大きい順(手前) に描画したい => reverse=False
-        # 左(X=0から見る): Xが大きい順(奥) -> Xが小さい順(手前) => reverse=True
-        # 右(X=Maxから見る): Xが小さい順(奥) -> Xが大きい順(手前) => reverse=False
         
         sorted_items = sorted(items, key=lambda x: x[sort_key], reverse=reverse_sort)
 
         for b in sorted_items:
             z_base = b.get('z', 0)
-            h_pos = b[axis_h] # x または y
+            h_pos = b[axis_h]
             w_size = b['w'] if axis_h == 'x' else b['d']
             
             for ly in range(b['ly']):
                 y_pos = z_base + ly * b['h']
                 ax.add_patch(patches.Rectangle((h_pos, y_pos), w_size, b['h'], 
-                    facecolor=b['col'], edgecolor='black', alpha=1.0, lw=1.0)) # 不透明度100%
+                    facecolor=b['col'], edgecolor='black', alpha=1.0, lw=1.0))
             
-            # 文字表示
             center_h = h_pos + w_size/2
             center_v = z_base + b['h_total']/2
             ax.text(center_h, center_v, label_func(b), ha='center', va='center', fontsize=7, color='black')
 
             if b.get('child'):
                 c = b['child']
-                c_h_pos = b[axis_h] # 子も親と同じ位置基準（簡易）※厳密には中央寄せ等のロジックによるが今回は親基準
+                c_h_pos = b[axis_h]
                 c_w_size = c['w'] if axis_h == 'x' else c['d']
                 c_base = z_base + b['h_total']
                 for ly in range(c['ly']):
@@ -185,19 +169,15 @@ def draw_pallet_figure(PW, PD, PH, p_items, figsize=(18, 8)): # 高さを少し�
 
     lbl = lambda b: b['name']
 
-    # 2. 正面図 (Front: Y=0から見る) -> 奥(Y大)から描画
     ax_front = fig.add_subplot(gs[0, 1])
     plot_side_view(ax_front, 'x', 'z', p_items, 'y', True, "② 正面図 (Front)", lbl)
 
-    # 3. 背面図 (Back: Y=Maxから見る) -> 奥(Y小)から描画
     ax_back = fig.add_subplot(gs[0, 2])
     plot_side_view(ax_back, 'x', 'z', p_items, 'y', False, "③ 背面図 (Back)", lbl)
 
-    # 4. 左側面図 (Left: X=0から見る) -> 奥(X大)から描画
     ax_left = fig.add_subplot(gs[1, 1])
     plot_side_view(ax_left, 'y', 'z', p_items, 'x', True, "④ 左側面図 (Left)", lbl)
 
-    # 5. 右側面図 (Right: X=Maxから見る) -> 奥(X小)から描画
     ax_right = fig.add_subplot(gs[1, 2])
     plot_side_view(ax_right, 'y', 'z', p_items, 'x', False, "⑤ 右側面図 (Right)", lbl)
 
@@ -262,8 +242,7 @@ def create_pdf(current_pallets, current_params, truck_img_bytes, input_products)
     PW = current_params['PW']; PD = current_params['PD']; PH = current_params['PH']
 
     for i, p_items in enumerate(current_pallets):
-        # グラフエリアの高さを確保
-        img_h_pdf = 200 # 少し大きくしました
+        img_h_pdf = 200
         req_h = 15 + 15 + img_h_pdf + 20 
         
         if y - req_h < margin_bottom:
@@ -284,7 +263,6 @@ def create_pdf(current_pallets, current_params, truck_img_bytes, input_products)
         c.setFont(font_name, 9)
         c.drawString(240, y, f"内訳: {d_str}")
 
-        # PDF用にも5面図を生成
         fig = draw_pallet_figure(PW, PD, PH, p_items, figsize=(12, 6))
         img_buf = io.BytesIO()
         fig.savefig(img_buf, format='png', bbox_inches='tight')
@@ -319,11 +297,9 @@ st.markdown("---")
 st.subheader("商品情報入力")
 st.info("💡 Excelからコピーして、表の左上のセルを選択し `Ctrl+V` で貼り付けられます。")
 
-# エディタのリセット用キー
 if 'editor_key' not in st.session_state:
     st.session_state.editor_key = 0
 
-# 空データ生成
 def get_empty_data():
     df = pd.DataFrame({
         "商品名": pd.Series([""] * 15, dtype="str"),
@@ -335,11 +311,9 @@ def get_empty_data():
     })
     return df
 
-# 初回初期化
 if 'df_products' not in st.session_state:
     st.session_state.df_products = get_empty_data()
 
-# --- ボタンエリア ---
 col_btn1, col_btn2 = st.columns([1, 1])
 with col_btn1:
     if st.button("🗑️ 全てクリア (入力を空にする)", use_container_width=True):
@@ -348,10 +322,8 @@ with col_btn1:
         st.session_state.editor_key += 1
         st.rerun()
 
-# 型の再強制
 st.session_state.df_products["商品名"] = st.session_state.df_products["商品名"].astype(str)
 
-# データエディタ
 column_order = ["商品名", "幅(mm)", "奥行(mm)", "高さ(mm)", "重量(kg)", "数量"]
 
 edited_df = st.data_editor(
@@ -362,13 +334,7 @@ edited_df = st.data_editor(
     hide_index=True,
     column_order=column_order,
     column_config={
-        "商品名": st.column_config.TextColumn(
-            "商品名", 
-            width="large", 
-            required=True,
-            default="",
-            validate="^.*$" 
-        ),
+        "商品名": st.column_config.TextColumn("商品名", width="large", required=True, default="", validate="^.*$"),
         "幅(mm)": st.column_config.NumberColumn("幅(mm)", min_value=0, format="%d"),
         "奥行(mm)": st.column_config.NumberColumn("奥行(mm)", min_value=0, format="%d"),
         "高さ(mm)": st.column_config.NumberColumn("高さ(mm)", min_value=0, format="%d"),
@@ -427,7 +393,7 @@ if st.button("計算実行", type="primary", use_container_width=True):
     if not items:
         st.error("計算可能な商品データがありません。（未入力、または全商品がサイズオーバーです）")
     else:
-        # --- 計算ロジック ---
+        # --- 計算ロジック (回転対応版) ---
         blocks = []
         for p in items:
             layers = max(1, int(PH // p['h']))
@@ -439,7 +405,10 @@ if st.button("計算実行", type="primary", use_container_width=True):
             if rem > 0: 
                 blocks.append({'name':p['name'], 'w':p['w'], 'd':p['d'], 'h':p['h'], 'ly':rem, 'g':rem*p['g'], 'col':p['col'], 'h_total':rem*p['h'], 'child':None, 'z':0, 'p_id':p['id']})
 
+        # 面積が大きい順にソート（大きい箱から配置したほうが効率的）
         blocks.sort(key=lambda x: (x['p_id'], -x['w']*x['d'], -x['h_total']))
+        
+        # 重ね積み（子ブロック）の処理
         merged_indices = set()
         for i in range(len(blocks)):
             if i in merged_indices: continue
@@ -450,35 +419,71 @@ if st.button("計算実行", type="primary", use_container_width=True):
                 top = blocks[j]
                 if top['h_total'] > base['h_total']: continue
                 if (base['h_total'] + top['h_total'] > PH): continue
+                # 重ね判定 (回転も考慮)
                 if ((limit_w >= top['w'] and limit_d >= top['d']) or (limit_w >= top['d'] and limit_d >= top['w'])):
-                    if not (limit_w >= top['w'] and limit_d >= top['d']): top['w'], top['d'] = top['d'], top['w']
+                    # もし回転しないと入らないなら、トップを回転させる
+                    if not (limit_w >= top['w'] and limit_d >= top['d']):
+                        top['w'], top['d'] = top['d'], top['w']
                     base['child'] = top; merged_indices.add(j); break
 
         active_blocks = [b for k, b in enumerate(blocks) if k not in merged_indices]
         pallet_states = []
+        
         for blk in active_blocks:
             w_total = blk['g'] + (blk['child']['g'] if blk['child'] else 0)
             placed = False
+            
+            # 既存パレットへの配置を試みる
             for p_state in pallet_states:
                 if p_state['cur_g'] + w_total > MAX_W: continue
-                fit = False
+                
+                # 配置チェック (回転も試す)
                 temp_cx, temp_cy, temp_rh = p_state['cx'], p_state['cy'], p_state['rh']
-                if temp_cx + blk['w'] <= PW and temp_cy + blk['d'] <= PD: fit = True
+                
+                # パターン1: 現在の向きで配置
+                if temp_cx + blk['w'] <= PW and temp_cy + blk['d'] <= PD:
+                    # OK
+                    pass
+                # パターン2: 90度回転して配置 (幅と奥行きを入れ替え)
+                elif temp_cx + blk['d'] <= PW and temp_cy + blk['w'] <= PD:
+                    blk['w'], blk['d'] = blk['d'], blk['w'] # 回転適用
+                # パターン3: 改行して配置 (現在の向き)
                 elif temp_cy + temp_rh + blk['d'] <= PD:
-                    temp_cx = 0; temp_cy += temp_rh; temp_rh = 0
-                    if temp_cx + blk['w'] <= PW and temp_cy + blk['d'] <= PD: fit = True
-                if fit:
-                    blk['x'] = temp_cx; blk['y'] = temp_cy; blk['z'] = 0
-                    p_state['items'].append(blk); p_state['cur_g'] += w_total
-                    p_state['cx'] = temp_cx + blk['w']; p_state['cy'] = temp_cy; p_state['rh'] = max(temp_rh, blk['d'])
-                    placed = True; break
+                    # 改行できるかチェック（幅も収まるか）
+                    if blk['w'] <= PW:
+                        temp_cx = 0; temp_cy += temp_rh; temp_rh = 0
+                    else:
+                        continue # 幅がパレット超えてる(回転必要かも)
+                # パターン4: 改行して回転配置
+                elif temp_cy + temp_rh + blk['w'] <= PD:
+                    if blk['d'] <= PW:
+                        temp_cx = 0; temp_cy += temp_rh; temp_rh = 0
+                        blk['w'], blk['d'] = blk['d'], blk['w'] # 回転適用
+                    else:
+                        continue
+                else:
+                    continue # どうやっても入らない
+
+                # ここに来たら配置確定
+                blk['x'] = temp_cx; blk['y'] = temp_cy; blk['z'] = 0
+                p_state['items'].append(blk); p_state['cur_g'] += w_total
+                p_state['cx'] = temp_cx + blk['w']; p_state['cy'] = temp_cy; p_state['rh'] = max(temp_rh, blk['d'])
+                placed = True; break
+            
             if not placed:
+                # 新しいパレット作成
+                # 新規パレットでも、横長にして置いたほうがいいか等を判定してもいいが
+                # ここではデフォルト向き（あるいは長辺を幅に合わせるなど）で配置
+                # 簡易的に、もし幅が入らないなら回転、そうでなければそのまま
+                if blk['w'] > PW and blk['d'] <= PW:
+                     blk['w'], blk['d'] = blk['d'], blk['w']
+                
                 new_state = {'items': [blk], 'cur_g': w_total, 'cx': blk['w'], 'cy': 0, 'rh': blk['d']}
                 blk['x'] = 0; blk['y'] = 0; blk['z'] = 0; pallet_states.append(new_state)
 
         st.session_state.results = [ps['items'] for ps in pallet_states]
         st.session_state.params = {'PW':PW, 'PD':PD, 'PH':PH, 'MAX_W':MAX_W, 'OH':OH}
-        st.session_state.input_products = items # PDF用
+        st.session_state.input_products = items
         st.session_state.calculated = True
 
 # --- 結果表示 ---
