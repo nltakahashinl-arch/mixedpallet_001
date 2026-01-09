@@ -279,37 +279,40 @@ st.info("💡 Excelからコピーして、表の左上のセルを選択し `Ct
 if 'editor_key' not in st.session_state:
     st.session_state.editor_key = 0
 
-# デフォルトデータ生成
+# デフォルトデータ生成 (紛らわしい数値を排除)
 def get_default_data():
     names = [f"商品{i+1}" for i in range(15)]
-    ws = [320, 340, 300, 250, 400] + [0]*10
-    ds = [300, 300, 340, 280, 350] + [0]*10
-    hs = [280, 250, 330, 220, 250] + [0]*10
-    gs = [6.0, 5.0, 8.0, 3.0, 6.0] + [0.0]*10
-    ns = [35, 32, 53, 23, 30] + [0]*10
+    # シンプルな初期値に変更
+    ws = [300]*5 + [0]*10
+    ds = [300]*5 + [0]*10
+    hs = [200]*5 + [0]*10
+    gs = [5.0]*5 + [0.0]*10
+    ns = [10]*5 + [0]*10
     
-    # 型を明示して作成 (String)
+    # シンプルなリストからデータフレームを作成
     df = pd.DataFrame({
-        "商品名": pd.Series(names, dtype="str"),
-        "幅(mm)": pd.Series(ws, dtype="int"),
-        "奥行(mm)": pd.Series(ds, dtype="int"),
-        "高さ(mm)": pd.Series(hs, dtype="int"),
-        "重量(kg)": pd.Series(gs, dtype="float"),
-        "数量": pd.Series(ns, dtype="int")
+        "商品名": names,
+        "幅(mm)": ws,
+        "奥行(mm)": ds,
+        "高さ(mm)": hs,
+        "重量(kg)": gs,
+        "数量": ns
     })
-    return df
+    # 全体を強制的に型変換
+    return df.astype({
+        "商品名": "str", 
+        "幅(mm)": "int", "奥行(mm)": "int", "高さ(mm)": "int", 
+        "重量(kg)": "float", "数量": "int"
+    })
 
 # 空データ生成
 def get_empty_data():
     df = pd.DataFrame({
-        "商品名": pd.Series([""] * 15, dtype="str"),
-        "幅(mm)": pd.Series([0]*15, dtype="int"),
-        "奥行(mm)": pd.Series([0]*15, dtype="int"),
-        "高さ(mm)": pd.Series([0]*15, dtype="int"),
-        "重量(kg)": pd.Series([0.0]*15, dtype="float"),
-        "数量": pd.Series([0]*15, dtype="int")
+        "商品名": [""] * 15,
+        "幅(mm)": [0]*15, "奥行(mm)": [0]*15, "高さ(mm)": [0]*15,
+        "重量(kg)": [0.0]*15, "数量": [0]*15
     })
-    return df
+    return df.astype({"商品名": "str"})
 
 # 初回初期化
 if 'df_products' not in st.session_state:
@@ -319,18 +322,19 @@ if 'df_products' not in st.session_state:
 col_btn1, col_btn2 = st.columns([1, 1])
 with col_btn1:
     if st.button("🗑️ 全てクリア (入力を空にする)", use_container_width=True):
-        # 強力なリセット: Session State自体を削除して再作成
-        del st.session_state['df_products']
         st.session_state.df_products = get_empty_data()
         st.session_state.editor_key += 1
         st.rerun()
 
 with col_btn2:
     if st.button("🔄 サンプルデータに戻す", use_container_width=True):
-        del st.session_state['df_products']
         st.session_state.df_products = get_default_data()
         st.session_state.editor_key += 1
         st.rerun()
+
+# --- 重要：表示前に再度型を確認 ---
+# 数値扱いされてしまうのを防ぐため、商品名は必ず文字列にする
+st.session_state.df_products["商品名"] = st.session_state.df_products["商品名"].astype(str)
 
 # データエディタ
 edited_df = st.data_editor(
@@ -340,12 +344,7 @@ edited_df = st.data_editor(
     use_container_width=True,
     hide_index=True,
     column_config={
-        "商品名": st.column_config.TextColumn(
-            "商品名", 
-            width="medium", 
-            required=True,
-            validate="^.*$" # あらゆる文字を受け入れる設定
-        ),
+        "商品名": st.column_config.TextColumn("商品名", width="medium", required=True),
         "幅(mm)": st.column_config.NumberColumn("幅(mm)", min_value=0, format="%d"),
         "奥行(mm)": st.column_config.NumberColumn("奥行(mm)", min_value=0, format="%d"),
         "高さ(mm)": st.column_config.NumberColumn("高さ(mm)", min_value=0, format="%d"),
@@ -367,9 +366,7 @@ if st.button("計算実行", type="primary", use_container_width=True):
     for idx, row in edited_df.iterrows():
         try:
             name = str(row["商品名"])
-            # 空文字ならスキップ
-            if not name.strip():
-                continue
+            if not name.strip(): continue # 空文字スキップ
                 
             w = int(row["幅(mm)"])
             d = int(row["奥行(mm)"])
@@ -377,8 +374,7 @@ if st.button("計算実行", type="primary", use_container_width=True):
             g = float(row["重量(kg)"])
             n = int(row["数量"])
             
-            if n <= 0 or w <= 0:
-                continue
+            if n <= 0 or w <= 0: continue
 
             can_fit_w_d = (w <= PW and d <= PD) or (w <= PD and d <= PW)
             can_fit_h = h <= PH
