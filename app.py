@@ -53,9 +53,9 @@ def create_horizontal_trucks_figure(num_pallets):
     PALLET_W = 1100 * SCALE
     PALLET_D = 1100 * SCALE
     TRUCK_W_BODY = 2400 * SCALE
-    MARGIN = 50 * SCALE
     MAX_L_10T = 9600 * SCALE
     CABIN_L = 1500 * SCALE
+    MARGIN = 50 * SCALE
 
     LIMIT_X_MIN = -CABIN_L - 10
     LIMIT_X_MAX = MAX_L_10T + 20
@@ -126,8 +126,8 @@ def draw_pallet_figure(PW, PD, PH, p_items, figsize=(18, 8)):
     sorted_items_z = sorted(p_items, key=lambda x: x.get('z', 0))
     for b in sorted_items_z:
         ax_top.add_patch(patches.Rectangle((b['x'], b['y']), b['w'], b['d'], facecolor=b['col'], edgecolor='black', alpha=0.9))
-        txt = f"{b['name']}\n{b['ly']}段"
-        if b.get('child'): txt += f"\n(上:{b['child']['name']})"
+        txt = f"{b['disp_name']}\n{b['ly']}段" # 表示名を使用
+        if b.get('child'): txt += f"\n(上:{b['child']['disp_name']})"
         ax_top.text(b['x'] + b['w']/2, b['y'] + b['d']/2, txt, ha='center', va='center', fontsize=8, color='black')
     ax_top.set_xlim(-50, PW+50); ax_top.set_ylim(-50, PD+50); ax_top.invert_yaxis()
     ax_top.set_title("① 上面図 (Top)", color='black', fontsize=12, fontweight='bold')
@@ -140,15 +140,31 @@ def draw_pallet_figure(PW, PD, PH, p_items, figsize=(18, 8)):
         
         sorted_items = sorted(items, key=lambda x: x[sort_key], reverse=reverse_sort)
 
+        # 奥行き判定用の最前面座標
+        if items:
+            min_depth = min([b[sort_key] for b in items])
+            max_depth = max([b[sort_key] for b in items])
+            front_val = max_depth if reverse_sort else min_depth
+        else:
+            front_val = 0
+
         for b in sorted_items:
             z_base = b.get('z', 0)
             h_pos = b[axis_h]
             w_size = b['w'] if axis_h == 'x' else b['d']
             
+            # 手前判定 (10mmの誤差許容)
+            depth_pos = b[sort_key]
+            is_front = abs(depth_pos - front_val) <= 10
+            
+            # 手前はくっきり、奥は薄く
+            alpha_val = 1.0 if is_front else 0.3
+            lw_val = 1.5 if is_front else 0.5
+
             for ly in range(b['ly']):
                 y_pos = z_base + ly * b['h']
                 ax.add_patch(patches.Rectangle((h_pos, y_pos), w_size, b['h'], 
-                    facecolor=b['col'], edgecolor='black', alpha=1.0, lw=1.0))
+                    facecolor=b['col'], edgecolor='black', alpha=alpha_val, lw=lw_val))
             
             center_h = h_pos + w_size/2
             center_v = z_base + b['h_total']/2
@@ -162,12 +178,12 @@ def draw_pallet_figure(PW, PD, PH, p_items, figsize=(18, 8)):
                 for ly in range(c['ly']):
                     y_pos = c_base + ly * c['h']
                     ax.add_patch(patches.Rectangle((c_h_pos, y_pos), c_w_size, c['h'], 
-                        facecolor=c['col'], edgecolor='black', alpha=1.0, lw=1.0))
+                        facecolor=c['col'], edgecolor='black', alpha=alpha_val, lw=lw_val))
 
         ax.set_xlim(-50, limit_h+50); ax.set_ylim(0, PH+100)
         ax.set_title(title, color='black', fontsize=10, fontweight='bold')
 
-    lbl = lambda b: b['name']
+    lbl = lambda b: b['disp_name']
 
     ax_front = fig.add_subplot(gs[0, 1])
     plot_side_view(ax_front, 'x', 'z', p_items, 'y', True, "② 正面図 (Front)", lbl)
@@ -253,8 +269,8 @@ def create_pdf(current_pallets, current_params, truck_img_bytes, input_products)
         p_weight = sum([b['g'] + (b['child']['g'] if b['child'] else 0) for b in p_items])
         cnt = {}
         for b in p_items:
-            cnt[b['name']] = cnt.get(b['name'], 0) + b['ly']
-            if b.get('child'): cnt[b['child']['name']] = cnt.get(b['child']['name'], 0) + b['child']['ly']
+            cnt[b['disp_name']] = cnt.get(b['disp_name'], 0) + b['ly']
+            if b.get('child'): cnt[b['child']['disp_name']] = cnt.get(b['child']['disp_name'], 0) + b['child']['ly']
         d_str = ", ".join([f"{k}:{v}個" for k,v in cnt.items()])
 
         c.setFont(font_name, 12)
@@ -295,11 +311,12 @@ st.markdown("---")
 
 # --- 2. 商品入力 (Excel貼り付け対応) ---
 st.subheader("商品情報入力")
-st.info("💡 Excelからコピーして、表の左上のセルを選択し `Ctrl+V` で貼り付けられます。")
+st.info("💡 Excelからコピーして、表の左上のセルを選択し `Ctrl+V` で貼り付けられます。「優先度」が高いほど先に（下に）積まれます。")
 
 if 'editor_key' not in st.session_state:
     st.session_state.editor_key = 0
 
+# 空データ生成 (列を追加)
 def get_empty_data():
     df = pd.DataFrame({
         "商品名": pd.Series([""] * 15, dtype="str"),
@@ -307,7 +324,9 @@ def get_empty_data():
         "奥行(mm)": pd.Series([0]*15, dtype="int"),
         "高さ(mm)": pd.Series([0]*15, dtype="int"),
         "重量(kg)": pd.Series([0.0]*15, dtype="float"),
-        "数量": pd.Series([0]*15, dtype="int")
+        "数量": pd.Series([0]*15, dtype="int"),
+        "優先度": pd.Series([1]*15, dtype="int"), # デフォルト優先度1
+        "配置向き": pd.Series(["自動"]*15, dtype="str") # デフォルト自動
     })
     return df
 
@@ -324,7 +343,8 @@ with col_btn1:
 
 st.session_state.df_products["商品名"] = st.session_state.df_products["商品名"].astype(str)
 
-column_order = ["商品名", "幅(mm)", "奥行(mm)", "高さ(mm)", "重量(kg)", "数量"]
+# データエディタ (列構成を更新)
+column_order = ["商品名", "幅(mm)", "奥行(mm)", "高さ(mm)", "重量(kg)", "数量", "優先度", "配置向き"]
 
 edited_df = st.data_editor(
     st.session_state.df_products,
@@ -340,6 +360,8 @@ edited_df = st.data_editor(
         "高さ(mm)": st.column_config.NumberColumn("高さ(mm)", min_value=0, format="%d"),
         "重量(kg)": st.column_config.NumberColumn("重量(kg)", min_value=0.0, format="%.1f"),
         "数量": st.column_config.NumberColumn("数量", min_value=0, format="%d"),
+        "優先度": st.column_config.NumberColumn("優先度(大=下)", min_value=1, max_value=100, step=1, help="数字が大きい商品を先に（下に）配置します"),
+        "配置向き": st.column_config.SelectboxColumn("配置向き", options=["自動", "横固定", "縦固定"], required=True, default="自動", help="回転を強制したい場合に指定してください"),
     }
 )
 
@@ -363,37 +385,59 @@ if st.button("計算実行", type="primary", use_container_width=True):
             h = int(row["高さ(mm)"])
             g = float(row["重量(kg)"])
             n = int(row["数量"])
+            prio = int(row["優先度"]) if "優先度" in row else 1
+            orient = str(row["配置向き"]) if "配置向き" in row else "自動"
             
             if n <= 0 or w <= 0: continue
 
-            can_fit_w_d = (w <= PW and d <= PD) or (w <= PD and d <= PW)
+            # --- 配置向きの事前チェック ---
+            # 縦固定なら最初からWとDを入れ替えておく
+            # 横固定ならそのまま
+            # 自動ならそのまま (あとでロジックで試行)
+            force_w, force_d = w, d
+            if orient == "縦固定":
+                force_w, force_d = d, w
+            
+            # 基本的なサイズチェック (固定向きで入るか？)
+            # 自動の場合はどちらかで入ればOK
+            if orient == "自動":
+                can_fit = (w <= PW and d <= PD) or (d <= PW and w <= PD)
+            else:
+                can_fit = (force_w <= PW and force_d <= PD)
+
             can_fit_h = h <= PH
             can_fit_weight = g <= MAX_W
 
-            if not can_fit_w_d:
-                st.error(f"❌ {name} はサイズ(幅・奥行)がパレットより大きいため除外されました。")
+            if not can_fit:
+                st.error(f"❌ {name} はサイズオーバーです（向き: {orient}）。")
                 continue
             elif not can_fit_h:
-                st.error(f"❌ {name} は高さがパレットより高いため除外されました。")
+                st.error(f"❌ {name} は高さオーバーです。")
                 continue
             elif not can_fit_weight:
-                st.error(f"❌ {name} は単体重量オーバーのため除外されました。")
+                st.error(f"❌ {name} は単体重量オーバーです。")
                 continue
             
             col = colors[idx % len(colors)]
             
+            # 図に表示する名前 (No.を付与)
+            disp_name = f"({idx+1}) {name}"
+
             items.append({
-                'name': name, 'w': w, 'd': d, 'h': h, 
-                'g': g, 'n': n, 'col': col, 'id': idx
+                'name': name, 'disp_name': disp_name, 
+                'w': force_w, 'd': force_d, 'h': h, 
+                'g': g, 'n': n, 'col': col, 'id': idx,
+                'prio': prio, 'orient': orient,
+                'orig_w': w, 'orig_d': d # 自動回転用に元のサイズも保持
             })
 
         except ValueError:
             continue
 
     if not items:
-        st.error("計算可能な商品データがありません。（未入力、または全商品がサイズオーバーです）")
+        st.error("計算可能な商品データがありません。")
     else:
-        # --- 計算ロジック (回転対応版) ---
+        # --- 計算ロジック (優先度 & 指定向き対応) ---
         blocks = []
         for p in items:
             layers = max(1, int(PH // p['h']))
@@ -401,12 +445,23 @@ if st.button("計算実行", type="primary", use_container_width=True):
             rem = int(p['n'] % layers)
             g_t, h_t = layers * p['g'], layers * p['h']
             for _ in range(full): 
-                blocks.append({'name':p['name'], 'w':p['w'], 'd':p['d'], 'h':p['h'], 'ly':layers, 'g':g_t, 'col':p['col'], 'h_total':h_t, 'child':None, 'z':0, 'p_id':p['id']})
+                blocks.append({
+                    'name':p['name'], 'disp_name':p['disp_name'], 
+                    'w':p['w'], 'd':p['d'], 'h':p['h'], 'ly':layers, 'g':g_t, 'col':p['col'], 
+                    'h_total':h_t, 'child':None, 'z':0, 'p_id':p['id'],
+                    'prio': p['prio'], 'orient': p['orient'], 'orig_w': p['orig_w'], 'orig_d': p['orig_d']
+                })
             if rem > 0: 
-                blocks.append({'name':p['name'], 'w':p['w'], 'd':p['d'], 'h':p['h'], 'ly':rem, 'g':rem*p['g'], 'col':p['col'], 'h_total':rem*p['h'], 'child':None, 'z':0, 'p_id':p['id']})
+                blocks.append({
+                    'name':p['name'], 'disp_name':p['disp_name'],
+                    'w':p['w'], 'd':p['d'], 'h':p['h'], 'ly':rem, 'g':rem*p['g'], 'col':p['col'], 
+                    'h_total':rem*p['h'], 'child':None, 'z':0, 'p_id':p['id'],
+                    'prio': p['prio'], 'orient': p['orient'], 'orig_w': p['orig_w'], 'orig_d': p['orig_d']
+                })
 
-        # 面積が大きい順にソート（大きい箱から配置したほうが効率的）
-        blocks.sort(key=lambda x: (x['p_id'], -x['w']*x['d'], -x['h_total']))
+        # ソート順: 優先度(降順) > 面積(降順) > 高さ(降順)
+        # 優先度が高いものが先頭に来る
+        blocks.sort(key=lambda x: (-x['prio'], -x['w']*x['d'], -x['h_total']))
         
         # 重ね積み（子ブロック）の処理
         merged_indices = set()
@@ -414,16 +469,49 @@ if st.button("計算実行", type="primary", use_container_width=True):
             if i in merged_indices: continue
             base = blocks[i]
             limit_w = base['w'] + (OH * 2); limit_d = base['d'] + (OH * 2)
+            
+            # 同じ優先度、または低い優先度のものしか上に積めない（簡易ルール）
             for j in range(i + 1, len(blocks)):
                 if j in merged_indices: continue
                 top = blocks[j]
                 if top['h_total'] > base['h_total']: continue
                 if (base['h_total'] + top['h_total'] > PH): continue
-                # 重ね判定 (回転も考慮)
-                if ((limit_w >= top['w'] and limit_d >= top['d']) or (limit_w >= top['d'] and limit_d >= top['w'])):
-                    # もし回転しないと入らないなら、トップを回転させる
-                    if not (limit_w >= top['w'] and limit_d >= top['d']):
-                        top['w'], top['d'] = top['d'], top['w']
+                
+                # サイズチェック (回転指示を考慮)
+                # baseは既に固定されている。topも固定済みだが、自動なら回転チャンスあり
+                
+                can_stack = False
+                final_top_w, final_top_d = top['w'], top['d']
+
+                # 現状で乗るか
+                if (limit_w >= top['w'] and limit_d >= top['d']) or (limit_w >= top['d'] and limit_d >= top['w']):
+                     # 乗るなら向き決定
+                     if not (limit_w >= top['w'] and limit_d >= top['d']):
+                         # 90度回せば乗る
+                         if top['orient'] == "横固定": pass # 回せないのでNG
+                         elif top['orient'] == "縦固定": pass # 既に回ってるのでNG (ロジック上ここには来にくいが念のため)
+                         else: 
+                             final_top_w, final_top_d = top['d'], top['w']
+                             can_stack = True
+                     else:
+                         can_stack = True
+                
+                # 自動の場合、まだチャンスがあるか？
+                # (上でチェック済みだが、念のため元サイズからの回転も確認)
+                if not can_stack and top['orient'] == "自動":
+                     # w, dを入れ替えてチェック
+                     rot_w, rot_d = top['d'], top['w']
+                     if (limit_w >= rot_w and limit_d >= rot_d) or (limit_w >= rot_d and limit_d >= rot_w):
+                         if limit_w >= rot_w and limit_d >= rot_d:
+                             final_top_w, final_top_d = rot_w, rot_d
+                             can_stack = True
+                         else:
+                             # さらに回す？いや同じこと。
+                             final_top_w, final_top_d = rot_d, rot_w
+                             can_stack = True
+
+                if can_stack:
+                    top['w'], top['d'] = final_top_w, final_top_d
                     base['child'] = top; merged_indices.add(j); break
 
         active_blocks = [b for k, b in enumerate(blocks) if k not in merged_indices]
@@ -433,51 +521,56 @@ if st.button("計算実行", type="primary", use_container_width=True):
             w_total = blk['g'] + (blk['child']['g'] if blk['child'] else 0)
             placed = False
             
-            # 既存パレットへの配置を試みる
             for p_state in pallet_states:
                 if p_state['cur_g'] + w_total > MAX_W: continue
                 
-                # 配置チェック (回転も試す)
                 temp_cx, temp_cy, temp_rh = p_state['cx'], p_state['cy'], p_state['rh']
                 
-                # パターン1: 現在の向きで配置
-                if temp_cx + blk['w'] <= PW and temp_cy + blk['d'] <= PD:
-                    # OK
-                    pass
-                # パターン2: 90度回転して配置 (幅と奥行きを入れ替え)
-                elif temp_cx + blk['d'] <= PW and temp_cy + blk['w'] <= PD:
-                    blk['w'], blk['d'] = blk['d'], blk['w'] # 回転適用
-                # パターン3: 改行して配置 (現在の向き)
-                elif temp_cy + temp_rh + blk['d'] <= PD:
-                    # 改行できるかチェック（幅も収まるか）
-                    if blk['w'] <= PW:
-                        temp_cx = 0; temp_cy += temp_rh; temp_rh = 0
-                    else:
-                        continue # 幅がパレット超えてる(回転必要かも)
-                # パターン4: 改行して回転配置
-                elif temp_cy + temp_rh + blk['w'] <= PD:
-                    if blk['d'] <= PW:
-                        temp_cx = 0; temp_cy += temp_rh; temp_rh = 0
-                        blk['w'], blk['d'] = blk['d'], blk['w'] # 回転適用
-                    else:
-                        continue
+                # 配置候補の向きリスト作成
+                try_orientations = []
+                if blk['orient'] == "自動":
+                    try_orientations = [(blk['w'], blk['d']), (blk['d'], blk['w'])]
                 else:
-                    continue # どうやっても入らない
+                    # 固定の場合は今のサイズ一択
+                    try_orientations = [(blk['w'], blk['d'])]
 
-                # ここに来たら配置確定
-                blk['x'] = temp_cx; blk['y'] = temp_cy; blk['z'] = 0
-                p_state['items'].append(blk); p_state['cur_g'] += w_total
-                p_state['cx'] = temp_cx + blk['w']; p_state['cy'] = temp_cy; p_state['rh'] = max(temp_rh, blk['d'])
-                placed = True; break
+                best_fit = None
+                
+                # 既存列への追加トライ
+                for tw, td in try_orientations:
+                    # そのまま後ろにおけるか
+                    if temp_cx + tw <= PW and temp_cy + td <= PD:
+                        best_fit = ('current_row', tw, td)
+                        break
+                    # 改行して置けるか
+                    elif temp_cy + temp_rh + td <= PD:
+                        if tw <= PW:
+                            best_fit = ('new_row', tw, td)
+                            break
+                
+                if best_fit:
+                    mode, fin_w, fin_d = best_fit
+                    if mode == 'new_row':
+                        temp_cx = 0; temp_cy += temp_rh; temp_rh = 0
+                    
+                    blk['w'], blk['d'] = fin_w, fin_d
+                    blk['x'] = temp_cx; blk['y'] = temp_cy; blk['z'] = 0
+                    p_state['items'].append(blk); p_state['cur_g'] += w_total
+                    p_state['cx'] = temp_cx + fin_w; p_state['cy'] = temp_cy; p_state['rh'] = max(temp_rh, fin_d)
+                    placed = True; break
             
             if not placed:
-                # 新しいパレット作成
-                # 新規パレットでも、横長にして置いたほうがいいか等を判定してもいいが
-                # ここではデフォルト向き（あるいは長辺を幅に合わせるなど）で配置
-                # 簡易的に、もし幅が入らないなら回転、そうでなければそのまま
-                if blk['w'] > PW and blk['d'] <= PW:
-                     blk['w'], blk['d'] = blk['d'], blk['w']
+                # 新規パレット
+                # 新規の場合も、自動なら「幅に合わせて最適な向き」で置く
+                fin_w, fin_d = blk['w'], blk['d']
+                if blk['orient'] == "自動":
+                    # 幅1100に対して、300x400なら 400x300(横長)で置いたほうが列効率が良いかもしれない？
+                    # 単純に「幅に収まる最大幅」をとるか、デフォルトのままにするか
+                    # ここでは、もし幅からはみ出るなら回転、そうでなければデフォルト、とする
+                    if blk['w'] > PW and blk['d'] <= PW:
+                        fin_w, fin_d = blk['d'], blk['w']
                 
+                blk['w'], blk['d'] = fin_w, fin_d
                 new_state = {'items': [blk], 'cur_g': w_total, 'cx': blk['w'], 'cy': 0, 'rh': blk['d']}
                 blk['x'] = 0; blk['y'] = 0; blk['z'] = 0; pallet_states.append(new_state)
 
@@ -523,8 +616,8 @@ if st.session_state.get('calculated', False):
             p_weight = sum([b['g'] + (b['child']['g'] if b['child'] else 0) for b in p_items])
             cnt = {}
             for b in p_items:
-                cnt[b['name']] = cnt.get(b['name'], 0) + b['ly']
-                if b['child']: cnt[b['child']['name']] = cnt.get(b['child']['name'], 0) + b['child']['ly']
+                cnt[b['disp_name']] = cnt.get(b['disp_name'], 0) + b['ly']
+                if b['child']: cnt[b['child']['disp_name']] = cnt.get(b['child']['disp_name'], 0) + b['child']['ly']
             d_str = ", ".join([f"{k}:{v}個" for k,v in cnt.items()])
             
             st.markdown(f"**重量: {p_weight}kg** | 内訳: {d_str}")
