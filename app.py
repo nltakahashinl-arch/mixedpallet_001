@@ -279,9 +279,10 @@ st.info("💡 Excelからコピーして、表の左上のセルを選択し `Ct
 if 'editor_key' not in st.session_state:
     st.session_state.editor_key = 0
 
-# デフォルトデータ生成関数
+# デフォルトデータ
 def get_default_data():
-    names = [f"商品{i+1}" for i in range(15)]
+    # 5商品 + 10空行
+    names = [f"商品{i+1}" for i in range(5)] + [""]*10
     ws = [320, 340, 300, 250, 400] + [0]*10
     ds = [300, 300, 340, 280, 350] + [0]*10
     hs = [280, 250, 330, 220, 250] + [0]*10
@@ -296,24 +297,21 @@ def get_default_data():
         "重量(kg)": gs,
         "数量": ns
     })
-    # 型を明示的に変換（これが重要：商品名を文字列にする）
-    df["商品名"] = df["商品名"].astype(str)
     return df
 
-# 空データ生成関数
+# 空データ（クリア用） - 商品名列を「空文字」にするのが重要
 def get_empty_data():
     df = pd.DataFrame({
-        "商品名": [f"商品{i+1}" for i in range(15)],
+        "商品名": [""] * 15,
         "幅(mm)": [0]*15,
         "奥行(mm)": [0]*15,
         "高さ(mm)": [0]*15,
         "重量(kg)": [0.0]*15,
         "数量": [0]*15
     })
-    df["商品名"] = df["商品名"].astype(str)
     return df
 
-# 初回のみデフォルトデータを定義
+# 初回
 if 'df_products' not in st.session_state:
     st.session_state.df_products = get_default_data()
 
@@ -322,20 +320,25 @@ col_btn1, col_btn2 = st.columns([1, 1])
 with col_btn1:
     if st.button("🗑️ 全てクリア (入力を空にする)", use_container_width=True):
         st.session_state.df_products = get_empty_data()
-        st.session_state.editor_key += 1 # キーを変更して強制リセット
+        st.session_state.editor_key += 1
         st.rerun()
 
 with col_btn2:
     if st.button("🔄 サンプルデータに戻す", use_container_width=True):
         st.session_state.df_products = get_default_data()
-        st.session_state.editor_key += 1 # キーを変更して強制リセット
+        st.session_state.editor_key += 1
         st.rerun()
 
-# データエディタの表示（行追加可能）
-# keyを動的に変えることで、ボタンを押したときに確実に再描画させる
+# ----------------------------------------------------
+# 【重要】商品名列を強制的に文字列型に変換してからエディタに渡す
+# これで数字だけのセルが混ざっても「文字列」として扱われる
+# ----------------------------------------------------
+st.session_state.df_products["商品名"] = st.session_state.df_products["商品名"].astype(str)
+
+# データエディタ
 edited_df = st.data_editor(
     st.session_state.df_products,
-    key=f"data_editor_{st.session_state.editor_key}", 
+    key=f"data_editor_{st.session_state.editor_key}", # キー変更で強制リフレッシュ
     num_rows="dynamic",
     use_container_width=True,
     hide_index=True,
@@ -362,14 +365,16 @@ if st.button("計算実行", type="primary", use_container_width=True):
     
     for idx, row in edited_df.iterrows():
         try:
-            # 商品名を文字列として確実に取得
+            # 取得時も念のため文字列変換
             name = str(row["商品名"])
+            # 数値変換 (エラー回避)
             w = int(row["幅(mm)"])
             d = int(row["奥行(mm)"])
             h = int(row["高さ(mm)"])
             g = float(row["重量(kg)"])
             n = int(row["数量"])
             
+            # 入力が0または空の場合はスキップ
             if n <= 0 or w <= 0:
                 continue
 
@@ -395,6 +400,7 @@ if st.button("計算実行", type="primary", use_container_width=True):
             })
 
         except ValueError:
+            # 数値変換エラーなどはスキップ
             continue
 
     if not items:
