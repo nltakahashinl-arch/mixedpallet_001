@@ -1,6 +1,5 @@
 import streamlit as st
 import matplotlib.pyplot as plt
-import matplotlib.font_manager as fm
 import matplotlib.patches as patches
 import io
 import os
@@ -37,14 +36,13 @@ def setup_font():
                 os.replace(extracted_path, font_path)
         except Exception:
             pass
-    
-    if os.path.exists(font_path):
-        fm.fontManager.addfont(font_path)
-        plt.rc('font', family='IPAexGothic')
-        return font_path
-    return None
+    return font_path
 
 font_file = setup_font()
+if font_file:
+    import matplotlib.font_manager as fm
+    fm.fontManager.addfont(font_file)
+    plt.rc('font', family='IPAexGothic')
 
 # --- トラック描画関数 ---
 def create_horizontal_trucks_figure(num_pallets):
@@ -279,72 +277,52 @@ st.info("💡 Excelからコピーして、表の左上のセルを選択し `Ct
 if 'editor_key' not in st.session_state:
     st.session_state.editor_key = 0
 
-# デフォルトデータ生成 (紛らわしい数値を排除)
-def get_default_data():
-    names = [f"商品{i+1}" for i in range(15)]
-    # シンプルな初期値に変更
-    ws = [300]*5 + [0]*10
-    ds = [300]*5 + [0]*10
-    hs = [200]*5 + [0]*10
-    gs = [5.0]*5 + [0.0]*10
-    ns = [10]*5 + [0]*10
-    
-    # シンプルなリストからデータフレームを作成
-    df = pd.DataFrame({
-        "商品名": names,
-        "幅(mm)": ws,
-        "奥行(mm)": ds,
-        "高さ(mm)": hs,
-        "重量(kg)": gs,
-        "数量": ns
-    })
-    # 全体を強制的に型変換
-    return df.astype({
-        "商品名": "str", 
-        "幅(mm)": "int", "奥行(mm)": "int", "高さ(mm)": "int", 
-        "重量(kg)": "float", "数量": "int"
-    })
-
-# 空データ生成
+# まっさらな空データ生成関数 (15行全て空)
+# 以前の「53, 23, 30」などの数値は完全に削除しました
 def get_empty_data():
     df = pd.DataFrame({
-        "商品名": [""] * 15,
-        "幅(mm)": [0]*15, "奥行(mm)": [0]*15, "高さ(mm)": [0]*15,
-        "重量(kg)": [0.0]*15, "数量": [0]*15
+        "商品名": pd.Series([""] * 15, dtype="str"), # 文字列型を強制
+        "幅(mm)": pd.Series([0]*15, dtype="int"),
+        "奥行(mm)": pd.Series([0]*15, dtype="int"),
+        "高さ(mm)": pd.Series([0]*15, dtype="int"),
+        "重量(kg)": pd.Series([0.0]*15, dtype="float"),
+        "数量": pd.Series([0]*15, dtype="int")
     })
-    return df.astype({"商品名": "str"})
+    return df
 
-# 初回初期化
+# 初回初期化 (いきなり空データで開始)
 if 'df_products' not in st.session_state:
-    st.session_state.df_products = get_default_data()
+    st.session_state.df_products = get_empty_data()
 
 # --- ボタンエリア ---
 col_btn1, col_btn2 = st.columns([1, 1])
 with col_btn1:
     if st.button("🗑️ 全てクリア (入力を空にする)", use_container_width=True):
+        # Session Stateを削除して強制リフレッシュ
+        del st.session_state['df_products']
         st.session_state.df_products = get_empty_data()
         st.session_state.editor_key += 1
         st.rerun()
 
-with col_btn2:
-    if st.button("🔄 サンプルデータに戻す", use_container_width=True):
-        st.session_state.df_products = get_default_data()
-        st.session_state.editor_key += 1
-        st.rerun()
-
-# --- 重要：表示前に再度型を確認 ---
-# 数値扱いされてしまうのを防ぐため、商品名は必ず文字列にする
-st.session_state.df_products["商品名"] = st.session_state.df_products["商品名"].astype(str)
-
 # データエディタ
+# column_orderを指定して、貼り付け時の列ズレを防ぐ
+column_order = ["商品名", "幅(mm)", "奥行(mm)", "高さ(mm)", "重量(kg)", "数量"]
+
 edited_df = st.data_editor(
     st.session_state.df_products,
     key=f"data_editor_{st.session_state.editor_key}",
     num_rows="dynamic",
     use_container_width=True,
     hide_index=True,
+    column_order=column_order, # 列順序を固定
     column_config={
-        "商品名": st.column_config.TextColumn("商品名", width="medium", required=True),
+        "商品名": st.column_config.TextColumn(
+            "商品名", 
+            width="large", 
+            required=True,
+            default="",
+            validate="^.*$" # どんな文字も許容
+        ),
         "幅(mm)": st.column_config.NumberColumn("幅(mm)", min_value=0, format="%d"),
         "奥行(mm)": st.column_config.NumberColumn("奥行(mm)", min_value=0, format="%d"),
         "高さ(mm)": st.column_config.NumberColumn("高さ(mm)", min_value=0, format="%d"),
@@ -365,8 +343,9 @@ if st.button("計算実行", type="primary", use_container_width=True):
     
     for idx, row in edited_df.iterrows():
         try:
+            # 商品名を文字列として取得
             name = str(row["商品名"])
-            if not name.strip(): continue # 空文字スキップ
+            if not name or name == "nan": continue
                 
             w = int(row["幅(mm)"])
             d = int(row["奥行(mm)"])
@@ -452,10 +431,9 @@ if st.button("計算実行", type="primary", use_container_width=True):
                 new_state = {'items': [blk], 'cur_g': w_total, 'cx': blk['w'], 'cy': 0, 'rh': blk['d']}
                 blk['x'] = 0; blk['y'] = 0; blk['z'] = 0; pallet_states.append(new_state)
 
-        # 保存
         st.session_state.results = [ps['items'] for ps in pallet_states]
         st.session_state.params = {'PW':PW, 'PD':PD, 'PH':PH, 'MAX_W':MAX_W, 'OH':OH}
-        st.session_state.input_products = items # PDF用
+        st.session_state.input_products = items
         st.session_state.calculated = True
 
 # --- 結果表示 ---
