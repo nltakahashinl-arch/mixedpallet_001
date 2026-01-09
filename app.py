@@ -110,7 +110,7 @@ def create_horizontal_trucks_figure(num_pallets):
     plt.tight_layout()
     return fig
 
-# --- 【修正】パレット詳細図描画 (奥の箱を点線にする機能を追加) ---
+# --- 【修正】パレット詳細図描画 (透明度で遠近感を表現) ---
 def draw_pallet_figure(PW, PD, PH, p_items, figsize=(18, 5)):
     fig, ax = plt.subplots(1, 3, figsize=figsize)
     fig.patch.set_facecolor('white')
@@ -128,27 +128,35 @@ def draw_pallet_figure(PW, PD, PH, p_items, figsize=(18, 5)):
     ax[0].add_patch(patches.Rectangle((0,0), PW, PD, fill=False, lw=2))
     sorted_items = sorted(p_items, key=lambda x: x.get('z', 0))
     for b in sorted_items:
-        ax[0].add_patch(patches.Rectangle((b['x'], b['y']), b['w'], b['d'], facecolor=b['col'], edgecolor='black', alpha=0.7))
+        # 上面図はすべて少し透明にして重なりを見せる
+        ax[0].add_patch(patches.Rectangle((b['x'], b['y']), b['w'], b['d'], facecolor=b['col'], edgecolor='black', alpha=0.8))
         txt = f"{b['name']}\n{b['ly']}段"
         if b.get('child'): txt += f"\n(上:{b['child']['name']})"
         ax[0].text(b['x'] + b['w']/2, b['y'] + b['d']/2, txt, ha='center', va='center', fontsize=8, color='black')
     ax[0].set_xlim(-50, PW+50); ax[0].set_ylim(-50, PD+50); ax[0].invert_yaxis()
     ax[0].set_title("① 上面図", color='black')
     
-    # 2. 正面図 (奥行き Y で点線判定)
+    # 2. 正面図 (奥行き Y で透明度判定)
     ax[1].add_patch(patches.Rectangle((0,0), PW, PH, fill=False, lw=2))
-    for b in p_items:
+    
+    # 描画順を奥から手前にするためにソート (Yが大きい順=奥から)
+    sorted_p_items_y = sorted(p_items, key=lambda x: x['y'], reverse=True)
+
+    for b in sorted_p_items_y:
         z_base = b.get('z', 0)
-        # 最前面(min_y)より奥にある場合は点線にする
-        is_front = (b['y'] <= min_y + 10) # 誤差許容
-        ls = '-' if is_front else '--' # 実線 or 点線
-        lw = 1.5 if is_front else 1.0  # 手前は太く、奥は細く
+        # 最前面(min_y付近)より奥にある場合は薄くする
+        is_front = (b['y'] <= min_y + 10) 
+        
+        # 【修正】手前はくっきり(alpha=1.0)、奥はかなり薄く(alpha=0.3)
+        alpha_val = 1.0 if is_front else 0.3
+        lw_val = 1.5 if is_front else 0.5 # 線の太さも変える
 
         for ly in range(b['ly']):
             y_pos = z_base + ly * b['h']
             ax[1].add_patch(patches.Rectangle((b['x'], y_pos), b['w'], b['h'], 
-                facecolor=b['col'], edgecolor='black', alpha=0.5, linestyle=ls, lw=lw))
+                facecolor=b['col'], edgecolor='black', alpha=alpha_val, linewidth=lw_val))
         
+        # 文字は常に濃く表示
         ax[1].text(b['x'] + b['w']/2, z_base + b['h_total']/2, b['name'], ha='center', va='center', fontsize=8, color='black')
         
         if b.get('child'):
@@ -156,24 +164,29 @@ def draw_pallet_figure(PW, PD, PH, p_items, figsize=(18, 5)):
             for ly in range(c_blk['ly']):
                 y_pos = c_base + ly * c_blk['h']
                 ax[1].add_patch(patches.Rectangle((b['x'], y_pos), c_blk['w'], c_blk['h'], 
-                    facecolor=c_blk['col'], edgecolor='black', alpha=0.5, linestyle=ls, lw=lw))
+                    facecolor=c_blk['col'], edgecolor='black', alpha=alpha_val, linewidth=lw_val))
 
     ax[1].set_xlim(-50, PW+50); ax[1].set_ylim(0, PH+100)
-    ax[1].set_title("② 正面図 (奥は点線)", color='black')
+    ax[1].set_title("② 正面図 (奥は薄く表示)", color='black')
 
-    # 3. 側面図 (幅 X で点線判定)
+    # 3. 側面図 (幅 X で透明度判定)
     ax[2].add_patch(patches.Rectangle((0,0), PD, PH, fill=False, lw=2))
-    for b in p_items:
+    
+    # 描画順を奥から手前にするためにソート (Xが大きい順=奥から)
+    sorted_p_items_x = sorted(p_items, key=lambda x: x['x'], reverse=True)
+
+    for b in sorted_p_items_x:
         z_base = b.get('z', 0)
-        # 最前面(min_x)より奥にある場合は点線にする
+        # 最前面(min_x付近)より奥にある場合は薄くする
         is_front_side = (b['x'] <= min_x + 10)
-        ls = '-' if is_front_side else '--'
-        lw = 1.5 if is_front_side else 1.0
+        
+        alpha_val = 1.0 if is_front_side else 0.3
+        lw_val = 1.5 if is_front_side else 0.5
 
         for ly in range(b['ly']):
             y_pos = z_base + ly * b['h']
             ax[2].add_patch(patches.Rectangle((b['y'], y_pos), b['d'], b['h'], 
-                facecolor=b['col'], edgecolor='black', alpha=0.5, linestyle=ls, lw=lw))
+                facecolor=b['col'], edgecolor='black', alpha=alpha_val, linewidth=lw_val))
         
         ax[2].text(b['y'] + b['d']/2, z_base + b['h_total']/2, b['name'], ha='center', va='center', fontsize=8, color='black')
         
@@ -182,10 +195,10 @@ def draw_pallet_figure(PW, PD, PH, p_items, figsize=(18, 5)):
             for ly in range(c_blk['ly']):
                 y_pos = c_base + ly * c_blk['h']
                 ax[2].add_patch(patches.Rectangle((b['y'], y_pos), c_blk['w'], c_blk['h'], 
-                    facecolor=c_blk['col'], edgecolor='black', alpha=0.5, linestyle=ls, lw=lw))
+                    facecolor=c_blk['col'], edgecolor='black', alpha=alpha_val, linewidth=lw_val))
 
     ax[2].set_xlim(-50, PD+50); ax[2].set_ylim(0, PH+100)
-    ax[2].set_title("③ 側面図 (奥は点線)", color='black')
+    ax[2].set_title("③ 側面図 (奥は薄く表示)", color='black')
     
     plt.tight_layout()
     return fig
