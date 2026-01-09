@@ -110,96 +110,97 @@ def create_horizontal_trucks_figure(num_pallets):
     plt.tight_layout()
     return fig
 
-# --- 【修正】パレット詳細図描画 (透明度で遠近感を表現) ---
-def draw_pallet_figure(PW, PD, PH, p_items, figsize=(18, 5)):
-    fig, ax = plt.subplots(1, 3, figsize=figsize)
+# --- 【大改造】パレット詳細図描画 (5面図) ---
+def draw_pallet_figure(PW, PD, PH, p_items, figsize=(18, 8)): # 高さを少し増やしました
+    fig = plt.figure(figsize=figsize)
     fig.patch.set_facecolor('white')
-    for a in ax: a.set_facecolor('white')
+    
+    # GridSpecでレイアウト作成 (2行3列)
+    # 左側(0列目)は上下結合して大きく使う
+    gs = fig.add_gridspec(2, 3, width_ratios=[1.2, 1, 1], height_ratios=[1, 1])
 
-    # 最前面の座標を取得（奥行き判定用）
-    if p_items:
-        min_y = min([b['y'] for b in p_items]) # 正面図用：一番手前のY座標
-        min_x = min([b['x'] for b in p_items]) # 側面図用：一番手前のX座標
-    else:
-        min_y = 0; min_x = 0
-
-    # 1. 上面図
-    ax[0].set_aspect('equal')
-    ax[0].add_patch(patches.Rectangle((0,0), PW, PD, fill=False, lw=2))
-    sorted_items = sorted(p_items, key=lambda x: x.get('z', 0))
-    for b in sorted_items:
-        # 上面図はすべて少し透明にして重なりを見せる
-        ax[0].add_patch(patches.Rectangle((b['x'], b['y']), b['w'], b['d'], facecolor=b['col'], edgecolor='black', alpha=0.8))
+    # 1. 上面図 (左側大きく)
+    ax_top = fig.add_subplot(gs[:, 0])
+    ax_top.set_facecolor('white')
+    ax_top.set_aspect('equal')
+    ax_top.add_patch(patches.Rectangle((0,0), PW, PD, fill=False, lw=2))
+    
+    # 上面図: 下から順に描画
+    sorted_items_z = sorted(p_items, key=lambda x: x.get('z', 0))
+    for b in sorted_items_z:
+        ax_top.add_patch(patches.Rectangle((b['x'], b['y']), b['w'], b['d'], facecolor=b['col'], edgecolor='black', alpha=0.9))
         txt = f"{b['name']}\n{b['ly']}段"
         if b.get('child'): txt += f"\n(上:{b['child']['name']})"
-        ax[0].text(b['x'] + b['w']/2, b['y'] + b['d']/2, txt, ha='center', va='center', fontsize=8, color='black')
-    ax[0].set_xlim(-50, PW+50); ax[0].set_ylim(-50, PD+50); ax[0].invert_yaxis()
-    ax[0].set_title("① 上面図", color='black')
-    
-    # 2. 正面図 (奥行き Y で透明度判定)
-    ax[1].add_patch(patches.Rectangle((0,0), PW, PH, fill=False, lw=2))
-    
-    # 描画順を奥から手前にするためにソート (Yが大きい順=奥から)
-    sorted_p_items_y = sorted(p_items, key=lambda x: x['y'], reverse=True)
+        ax_top.text(b['x'] + b['w']/2, b['y'] + b['d']/2, txt, ha='center', va='center', fontsize=8, color='black')
+    ax_top.set_xlim(-50, PW+50); ax_top.set_ylim(-50, PD+50); ax_top.invert_yaxis()
+    ax_top.set_title("① 上面図 (Top)", color='black', fontsize=12, fontweight='bold')
 
-    for b in sorted_p_items_y:
-        z_base = b.get('z', 0)
-        # 最前面(min_y付近)より奥にある場合は薄くする
-        is_front = (b['y'] <= min_y + 10) 
+    # 共通描画関数 (側面用)
+    def plot_side_view(ax, axis_h, axis_v, items, sort_key, reverse_sort, title, label_func):
+        ax.set_facecolor('white')
         
-        # 【修正】手前はくっきり(alpha=1.0)、奥はかなり薄く(alpha=0.3)
-        alpha_val = 1.0 if is_front else 0.3
-        lw_val = 1.5 if is_front else 0.5 # 線の太さも変える
-
-        for ly in range(b['ly']):
-            y_pos = z_base + ly * b['h']
-            ax[1].add_patch(patches.Rectangle((b['x'], y_pos), b['w'], b['h'], 
-                facecolor=b['col'], edgecolor='black', alpha=alpha_val, linewidth=lw_val))
+        # 枠線
+        limit_h = PW if axis_h == 'x' else PD
+        ax.add_patch(patches.Rectangle((0,0), limit_h, PH, fill=False, lw=2))
         
-        # 文字は常に濃く表示
-        ax[1].text(b['x'] + b['w']/2, z_base + b['h_total']/2, b['name'], ha='center', va='center', fontsize=8, color='black')
+        # 描画順序 (手前のものが後に描画されるようにソート)
+        # reverse=False (昇順): 小さい値(手前)から描画 → 奥が上書きされる(NG)
+        # reverse=True (降順): 大きい値(奥)から描画 → 手前が上書きされる(OK)
+        # ※視点によって「手前」の定義が変わる
         
-        if b.get('child'):
-            c_blk = b['child']; c_base = z_base + b['h_total']
-            for ly in range(c_blk['ly']):
-                y_pos = c_base + ly * c_blk['h']
-                ax[1].add_patch(patches.Rectangle((b['x'], y_pos), c_blk['w'], c_blk['h'], 
-                    facecolor=c_blk['col'], edgecolor='black', alpha=alpha_val, linewidth=lw_val))
-
-    ax[1].set_xlim(-50, PW+50); ax[1].set_ylim(0, PH+100)
-    ax[1].set_title("② 正面図 (奥は薄く表示)", color='black')
-
-    # 3. 側面図 (幅 X で透明度判定)
-    ax[2].add_patch(patches.Rectangle((0,0), PD, PH, fill=False, lw=2))
-    
-    # 描画順を奥から手前にするためにソート (Xが大きい順=奥から)
-    sorted_p_items_x = sorted(p_items, key=lambda x: x['x'], reverse=True)
-
-    for b in sorted_p_items_x:
-        z_base = b.get('z', 0)
-        # 最前面(min_x付近)より奥にある場合は薄くする
-        is_front_side = (b['x'] <= min_x + 10)
+        # 正面(Y=0から見る): Yが大きい順(奥) -> Yが小さい順(手前) に描画したい => reverse=True
+        # 背面(Y=Maxから見る): Yが小さい順(奥) -> Yが大きい順(手前) に描画したい => reverse=False
+        # 左(X=0から見る): Xが大きい順(奥) -> Xが小さい順(手前) => reverse=True
+        # 右(X=Maxから見る): Xが小さい順(奥) -> Xが大きい順(手前) => reverse=False
         
-        alpha_val = 1.0 if is_front_side else 0.3
-        lw_val = 1.5 if is_front_side else 0.5
+        sorted_items = sorted(items, key=lambda x: x[sort_key], reverse=reverse_sort)
 
-        for ly in range(b['ly']):
-            y_pos = z_base + ly * b['h']
-            ax[2].add_patch(patches.Rectangle((b['y'], y_pos), b['d'], b['h'], 
-                facecolor=b['col'], edgecolor='black', alpha=alpha_val, linewidth=lw_val))
-        
-        ax[2].text(b['y'] + b['d']/2, z_base + b['h_total']/2, b['name'], ha='center', va='center', fontsize=8, color='black')
-        
-        if b.get('child'):
-            c_blk = b['child']; c_base = z_base + b['h_total']
-            for ly in range(c_blk['ly']):
-                y_pos = c_base + ly * c_blk['h']
-                ax[2].add_patch(patches.Rectangle((b['y'], y_pos), c_blk['w'], c_blk['h'], 
-                    facecolor=c_blk['col'], edgecolor='black', alpha=alpha_val, linewidth=lw_val))
+        for b in sorted_items:
+            z_base = b.get('z', 0)
+            h_pos = b[axis_h] # x または y
+            w_size = b['w'] if axis_h == 'x' else b['d']
+            
+            for ly in range(b['ly']):
+                y_pos = z_base + ly * b['h']
+                ax.add_patch(patches.Rectangle((h_pos, y_pos), w_size, b['h'], 
+                    facecolor=b['col'], edgecolor='black', alpha=1.0, lw=1.0)) # 不透明度100%
+            
+            # 文字表示
+            center_h = h_pos + w_size/2
+            center_v = z_base + b['h_total']/2
+            ax.text(center_h, center_v, label_func(b), ha='center', va='center', fontsize=7, color='black')
 
-    ax[2].set_xlim(-50, PD+50); ax[2].set_ylim(0, PH+100)
-    ax[2].set_title("③ 側面図 (奥は薄く表示)", color='black')
-    
+            if b.get('child'):
+                c = b['child']
+                c_h_pos = b[axis_h] # 子も親と同じ位置基準（簡易）※厳密には中央寄せ等のロジックによるが今回は親基準
+                c_w_size = c['w'] if axis_h == 'x' else c['d']
+                c_base = z_base + b['h_total']
+                for ly in range(c['ly']):
+                    y_pos = c_base + ly * c['h']
+                    ax.add_patch(patches.Rectangle((c_h_pos, y_pos), c_w_size, c['h'], 
+                        facecolor=c['col'], edgecolor='black', alpha=1.0, lw=1.0))
+
+        ax.set_xlim(-50, limit_h+50); ax.set_ylim(0, PH+100)
+        ax.set_title(title, color='black', fontsize=10, fontweight='bold')
+
+    lbl = lambda b: b['name']
+
+    # 2. 正面図 (Front: Y=0から見る) -> 奥(Y大)から描画
+    ax_front = fig.add_subplot(gs[0, 1])
+    plot_side_view(ax_front, 'x', 'z', p_items, 'y', True, "② 正面図 (Front)", lbl)
+
+    # 3. 背面図 (Back: Y=Maxから見る) -> 奥(Y小)から描画
+    ax_back = fig.add_subplot(gs[0, 2])
+    plot_side_view(ax_back, 'x', 'z', p_items, 'y', False, "③ 背面図 (Back)", lbl)
+
+    # 4. 左側面図 (Left: X=0から見る) -> 奥(X大)から描画
+    ax_left = fig.add_subplot(gs[1, 1])
+    plot_side_view(ax_left, 'y', 'z', p_items, 'x', True, "④ 左側面図 (Left)", lbl)
+
+    # 5. 右側面図 (Right: X=Maxから見る) -> 奥(X小)から描画
+    ax_right = fig.add_subplot(gs[1, 2])
+    plot_side_view(ax_right, 'y', 'z', p_items, 'x', False, "⑤ 右側面図 (Right)", lbl)
+
     plt.tight_layout()
     return fig
 
@@ -261,7 +262,8 @@ def create_pdf(current_pallets, current_params, truck_img_bytes, input_products)
     PW = current_params['PW']; PD = current_params['PD']; PH = current_params['PH']
 
     for i, p_items in enumerate(current_pallets):
-        img_h_pdf = 150
+        # グラフエリアの高さを確保
+        img_h_pdf = 200 # 少し大きくしました
         req_h = 15 + 15 + img_h_pdf + 20 
         
         if y - req_h < margin_bottom:
@@ -282,7 +284,8 @@ def create_pdf(current_pallets, current_params, truck_img_bytes, input_products)
         c.setFont(font_name, 9)
         c.drawString(240, y, f"内訳: {d_str}")
 
-        fig = draw_pallet_figure(PW, PD, PH, p_items, figsize=(12, 3.5))
+        # PDF用にも5面図を生成
+        fig = draw_pallet_figure(PW, PD, PH, p_items, figsize=(12, 6))
         img_buf = io.BytesIO()
         fig.savefig(img_buf, format='png', bbox_inches='tight')
         img_buf.seek(0); plt.close(fig)
