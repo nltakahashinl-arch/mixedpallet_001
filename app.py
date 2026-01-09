@@ -199,7 +199,7 @@ def create_pdf(current_pallets, current_params, truck_img_bytes, input_products)
     text_y -= 25
     c.drawString(40, text_y, f"パレット: {current_params['PW']}x{current_params['PD']}x{current_params['PH']}mm")
     text_y -= 15
-    c.drawString(40, text_y, f"Max {current_params['MAX_W']}kg / 許容: {current_params['OH']}mm")
+    c.drawString(40, text_y, f"Max {current_params['MAX_W']}kg /許容: {current_params['OH']}mm")
 
     text_y -= 40
     c.drawString(40, text_y, "■ 入力商品情報")
@@ -271,9 +271,13 @@ with st.expander("パレット設定", expanded=True):
 
 st.markdown("---")
 
-# --- 2. 商品入力 (Excel貼り付け対応 / 15種類対応) ---
+# --- 2. 商品入力 (Excel貼り付け対応) ---
 st.subheader("商品情報入力")
 st.info("💡 Excelからコピーして、表の左上のセルを選択し `Ctrl+V` で貼り付けられます。")
+
+# エディタのリセット用キーを管理
+if 'editor_key' not in st.session_state:
+    st.session_state.editor_key = 0
 
 # デフォルトデータ生成関数
 def get_default_data():
@@ -284,7 +288,7 @@ def get_default_data():
     gs = [6.0, 5.0, 8.0, 3.0, 6.0] + [0.0]*10
     ns = [35, 32, 53, 23, 30] + [0]*10
     
-    return pd.DataFrame({
+    df = pd.DataFrame({
         "商品名": names,
         "幅(mm)": ws,
         "奥行(mm)": ds,
@@ -292,6 +296,22 @@ def get_default_data():
         "重量(kg)": gs,
         "数量": ns
     })
+    # 型を明示的に変換（これが重要：商品名を文字列にする）
+    df["商品名"] = df["商品名"].astype(str)
+    return df
+
+# 空データ生成関数
+def get_empty_data():
+    df = pd.DataFrame({
+        "商品名": [f"商品{i+1}" for i in range(15)],
+        "幅(mm)": [0]*15,
+        "奥行(mm)": [0]*15,
+        "高さ(mm)": [0]*15,
+        "重量(kg)": [0.0]*15,
+        "数量": [0]*15
+    })
+    df["商品名"] = df["商品名"].astype(str)
+    return df
 
 # 初回のみデフォルトデータを定義
 if 'df_products' not in st.session_state:
@@ -301,23 +321,21 @@ if 'df_products' not in st.session_state:
 col_btn1, col_btn2 = st.columns([1, 1])
 with col_btn1:
     if st.button("🗑️ 全てクリア (入力を空にする)", use_container_width=True):
-        # 15行の空データでリセット
-        empty_data = {
-            "商品名": [f"商品{i+1}" for i in range(15)],
-            "幅(mm)": [0]*15, "奥行(mm)": [0]*15, "高さ(mm)": [0]*15,
-            "重量(kg)": [0.0]*15, "数量": [0]*15
-        }
-        st.session_state.df_products = pd.DataFrame(empty_data)
+        st.session_state.df_products = get_empty_data()
+        st.session_state.editor_key += 1 # キーを変更して強制リセット
         st.rerun()
 
 with col_btn2:
     if st.button("🔄 サンプルデータに戻す", use_container_width=True):
         st.session_state.df_products = get_default_data()
+        st.session_state.editor_key += 1 # キーを変更して強制リセット
         st.rerun()
 
 # データエディタの表示（行追加可能）
+# keyを動的に変えることで、ボタンを押したときに確実に再描画させる
 edited_df = st.data_editor(
     st.session_state.df_products,
+    key=f"data_editor_{st.session_state.editor_key}", 
     num_rows="dynamic",
     use_container_width=True,
     hide_index=True,
@@ -339,13 +357,12 @@ if st.button("計算実行", type="primary", use_container_width=True):
     PW, PD, PH = pw_val, pd_val, ph_val
     MAX_W, OH = pm_val, oh_val
     
-    # データを整形
     items = []
-    colors = ['#ff9999', '#99ccff', '#99ff99', '#ffff99', '#cc99ff', '#ffa07a', '#87cefa', '#f0e68c', '#dda0dd', '#90ee90'] # 色の候補
+    colors = ['#ff9999', '#99ccff', '#99ff99', '#ffff99', '#cc99ff', '#ffa07a', '#87cefa', '#f0e68c', '#dda0dd', '#90ee90'] 
     
-    # データフレームをループ処理
     for idx, row in edited_df.iterrows():
         try:
+            # 商品名を文字列として確実に取得
             name = str(row["商品名"])
             w = int(row["幅(mm)"])
             d = int(row["奥行(mm)"])
@@ -353,11 +370,9 @@ if st.button("計算実行", type="primary", use_container_width=True):
             g = float(row["重量(kg)"])
             n = int(row["数量"])
             
-            # 入力が0または空の場合はスキップ
             if n <= 0 or w <= 0:
                 continue
 
-            # 積載チェック
             can_fit_w_d = (w <= PW and d <= PD) or (w <= PD and d <= PW)
             can_fit_h = h <= PH
             can_fit_weight = g <= MAX_W
@@ -372,7 +387,6 @@ if st.button("計算実行", type="primary", use_container_width=True):
                 st.error(f"❌ {name} は単体重量オーバーのため除外されました。")
                 continue
             
-            # 色を割り当て
             col = colors[idx % len(colors)]
             
             items.append({
@@ -381,7 +395,6 @@ if st.button("計算実行", type="primary", use_container_width=True):
             })
 
         except ValueError:
-            # 空行や数値以外が入っている場合のスキップ処理
             continue
 
     if not items:
@@ -475,7 +488,6 @@ if st.session_state.get('calculated', False):
     st.subheader("詳細: パレット内訳")
 
     for i, p_items in enumerate(results):
-        # expanded=True に変更して、最初から全て開くようにしました
         with st.expander(f"パレット {i+1}", expanded=True):
             p_weight = sum([b['g'] + (b['child']['g'] if b['child'] else 0) for b in p_items])
             cnt = {}
