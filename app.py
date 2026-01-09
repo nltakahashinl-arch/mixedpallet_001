@@ -275,43 +275,43 @@ st.markdown("---")
 st.subheader("商品情報入力")
 st.info("💡 Excelからコピーして、表の左上のセルを選択し `Ctrl+V` で貼り付けられます。")
 
-# エディタのリセット用キーを管理
+# エディタのリセット用キー
 if 'editor_key' not in st.session_state:
     st.session_state.editor_key = 0
 
-# デフォルトデータ
+# デフォルトデータ生成
 def get_default_data():
-    # 5商品 + 10空行
-    names = [f"商品{i+1}" for i in range(5)] + [""]*10
+    names = [f"商品{i+1}" for i in range(15)]
     ws = [320, 340, 300, 250, 400] + [0]*10
     ds = [300, 300, 340, 280, 350] + [0]*10
     hs = [280, 250, 330, 220, 250] + [0]*10
     gs = [6.0, 5.0, 8.0, 3.0, 6.0] + [0.0]*10
     ns = [35, 32, 53, 23, 30] + [0]*10
     
+    # 型を明示して作成 (String)
     df = pd.DataFrame({
-        "商品名": names,
-        "幅(mm)": ws,
-        "奥行(mm)": ds,
-        "高さ(mm)": hs,
-        "重量(kg)": gs,
-        "数量": ns
+        "商品名": pd.Series(names, dtype="str"),
+        "幅(mm)": pd.Series(ws, dtype="int"),
+        "奥行(mm)": pd.Series(ds, dtype="int"),
+        "高さ(mm)": pd.Series(hs, dtype="int"),
+        "重量(kg)": pd.Series(gs, dtype="float"),
+        "数量": pd.Series(ns, dtype="int")
     })
     return df
 
-# 空データ（クリア用） - 商品名列を「空文字」にするのが重要
+# 空データ生成
 def get_empty_data():
     df = pd.DataFrame({
-        "商品名": [""] * 15,
-        "幅(mm)": [0]*15,
-        "奥行(mm)": [0]*15,
-        "高さ(mm)": [0]*15,
-        "重量(kg)": [0.0]*15,
-        "数量": [0]*15
+        "商品名": pd.Series([""] * 15, dtype="str"),
+        "幅(mm)": pd.Series([0]*15, dtype="int"),
+        "奥行(mm)": pd.Series([0]*15, dtype="int"),
+        "高さ(mm)": pd.Series([0]*15, dtype="int"),
+        "重量(kg)": pd.Series([0.0]*15, dtype="float"),
+        "数量": pd.Series([0]*15, dtype="int")
     })
     return df
 
-# 初回
+# 初回初期化
 if 'df_products' not in st.session_state:
     st.session_state.df_products = get_default_data()
 
@@ -319,31 +319,33 @@ if 'df_products' not in st.session_state:
 col_btn1, col_btn2 = st.columns([1, 1])
 with col_btn1:
     if st.button("🗑️ 全てクリア (入力を空にする)", use_container_width=True):
+        # 強力なリセット: Session State自体を削除して再作成
+        del st.session_state['df_products']
         st.session_state.df_products = get_empty_data()
         st.session_state.editor_key += 1
         st.rerun()
 
 with col_btn2:
     if st.button("🔄 サンプルデータに戻す", use_container_width=True):
+        del st.session_state['df_products']
         st.session_state.df_products = get_default_data()
         st.session_state.editor_key += 1
         st.rerun()
 
-# ----------------------------------------------------
-# 【重要】商品名列を強制的に文字列型に変換してからエディタに渡す
-# これで数字だけのセルが混ざっても「文字列」として扱われる
-# ----------------------------------------------------
-st.session_state.df_products["商品名"] = st.session_state.df_products["商品名"].astype(str)
-
 # データエディタ
 edited_df = st.data_editor(
     st.session_state.df_products,
-    key=f"data_editor_{st.session_state.editor_key}", # キー変更で強制リフレッシュ
+    key=f"data_editor_{st.session_state.editor_key}",
     num_rows="dynamic",
     use_container_width=True,
     hide_index=True,
     column_config={
-        "商品名": st.column_config.TextColumn("商品名", width="medium", required=True),
+        "商品名": st.column_config.TextColumn(
+            "商品名", 
+            width="medium", 
+            required=True,
+            validate="^.*$" # あらゆる文字を受け入れる設定
+        ),
         "幅(mm)": st.column_config.NumberColumn("幅(mm)", min_value=0, format="%d"),
         "奥行(mm)": st.column_config.NumberColumn("奥行(mm)", min_value=0, format="%d"),
         "高さ(mm)": st.column_config.NumberColumn("高さ(mm)", min_value=0, format="%d"),
@@ -356,7 +358,6 @@ st.markdown("---")
 
 # --- 計算実行ボタン ---
 if st.button("計算実行", type="primary", use_container_width=True):
-    # パラメータ取得
     PW, PD, PH = pw_val, pd_val, ph_val
     MAX_W, OH = pm_val, oh_val
     
@@ -365,16 +366,17 @@ if st.button("計算実行", type="primary", use_container_width=True):
     
     for idx, row in edited_df.iterrows():
         try:
-            # 取得時も念のため文字列変換
             name = str(row["商品名"])
-            # 数値変換 (エラー回避)
+            # 空文字ならスキップ
+            if not name.strip():
+                continue
+                
             w = int(row["幅(mm)"])
             d = int(row["奥行(mm)"])
             h = int(row["高さ(mm)"])
             g = float(row["重量(kg)"])
             n = int(row["数量"])
             
-            # 入力が0または空の場合はスキップ
             if n <= 0 or w <= 0:
                 continue
 
@@ -400,7 +402,6 @@ if st.button("計算実行", type="primary", use_container_width=True):
             })
 
         except ValueError:
-            # 数値変換エラーなどはスキップ
             continue
 
     if not items:
