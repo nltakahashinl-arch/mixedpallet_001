@@ -50,9 +50,12 @@ def create_horizontal_trucks_figure(num_pallets):
     fig.patch.set_facecolor('white')
 
     SCALE = 1/100
+    PALLET_W = 1100 * SCALE
+    PALLET_D = 1100 * SCALE
     TRUCK_W_BODY = 2400 * SCALE
     MAX_L_10T = 9600 * SCALE
     CABIN_L = 1500 * SCALE
+    MARGIN = 50 * SCALE
 
     LIMIT_X_MIN = -CABIN_L - 10
     LIMIT_X_MAX = MAX_L_10T + 20
@@ -91,19 +94,16 @@ def create_horizontal_trucks_figure(num_pallets):
             ax_obj.add_patch(patches.Rectangle((tx, TRUCK_W_BODY), tire_w, tire_h, fc='#333333', ec='black'))
             ax_obj.add_patch(patches.Rectangle((tx, -tire_h), tire_w, tire_h, fc='#333333', ec='black'))
 
-        # パレットの簡易表示（詳細位置ではなく個数イメージ）
-        PALLET_D_IMG = 1100 * SCALE 
-        MARGIN_IMG = 50 * SCALE
         for i in range(max_p):
             c_idx = i % 2; r_idx = i // 2
-            px = MARGIN_IMG + (r_idx * (PALLET_D_IMG + MARGIN_IMG))
-            py = (TRUCK_W_BODY / 2) - PALLET_D_IMG - (MARGIN_IMG/2) if c_idx == 0 else (TRUCK_W_BODY / 2) + (MARGIN_IMG/2)
+            px = MARGIN + (r_idx * (PALLET_D + MARGIN))
+            py = (TRUCK_W_BODY / 2) - PALLET_W - (MARGIN/2) if c_idx == 0 else (TRUCK_W_BODY / 2) + (MARGIN/2)
             
-            ax_obj.add_patch(patches.Rectangle((px, py), PALLET_D_IMG, PALLET_D_IMG, fill=False, ec='silver', linestyle=':'))
+            ax_obj.add_patch(patches.Rectangle((px, py), PALLET_W, PALLET_D, fill=False, ec='silver', linestyle=':'))
             if i < current_p:
                 color = '#90EE90' if truck_type == '10t' else '#87CEEB'
-                ax_obj.add_patch(patches.Rectangle((px, py), PALLET_D_IMG, PALLET_D_IMG, fc=color, ec='black', alpha=0.8))
-                ax_obj.text(px + PALLET_D_IMG/2, py + PALLET_D_IMG/2, f"P{i+1}", ha='center', va='center', fontsize=6, fontweight='bold', color='black')
+                ax_obj.add_patch(patches.Rectangle((px, py), PALLET_W, PALLET_D, fc=color, ec='black', alpha=0.8))
+                ax_obj.text(px + PALLET_W/2, py + PALLET_D/2, f"P{i+1}", ha='center', va='center', fontsize=6, fontweight='bold', color='black')
 
     draw_truck_h(ax[0], '4t', 10, num_pallets)
     draw_truck_h(ax[1], '10t', 16, num_pallets)
@@ -117,7 +117,6 @@ def draw_pallet_figure(PW, PD, PH, p_items, figsize=(18, 8)):
     
     gs = fig.add_gridspec(2, 3, width_ratios=[1.2, 1, 1], height_ratios=[1, 1])
 
-    # 1. 上面図
     ax_top = fig.add_subplot(gs[:, 0])
     ax_top.set_facecolor('white')
     ax_top.set_aspect('equal')
@@ -132,7 +131,6 @@ def draw_pallet_figure(PW, PD, PH, p_items, figsize=(18, 8)):
     ax_top.set_xlim(-50, PW+50); ax_top.set_ylim(-50, PD+50); ax_top.invert_yaxis()
     ax_top.set_title("① 上面図 (Top)", color='black', fontsize=12, fontweight='bold')
 
-    # 共通描画関数
     def plot_side_view(ax, axis_h, axis_v, items, sort_key, reverse_sort, title, label_func):
         ax.set_facecolor('white')
         limit_h = PW if axis_h == 'x' else PD
@@ -180,7 +178,7 @@ def draw_pallet_figure(PW, PD, PH, p_items, figsize=(18, 8)):
         ax.set_xlim(-50, limit_h+50); ax.set_ylim(0, PH+100)
         ax.set_title(title, color='black', fontsize=10, fontweight='bold')
 
-    lbl = lambda b: b['disp_name'] # 表示名を使用（ID含む）
+    lbl = lambda b: b['disp_name']
 
     ax_front = fig.add_subplot(gs[0, 1])
     plot_side_view(ax_front, 'x', 'z', p_items, 'y', True, "② 正面図 (Front)", lbl)
@@ -360,7 +358,7 @@ edited_df = st.data_editor(
     }
 )
 
-# --- 【新機能】個別の箱への指示設定 ---
+# --- 個別の箱への指示設定 ---
 st.markdown("---")
 with st.expander("📝 詳細設定：箱ごとの個別指示（ID指定）", expanded=True):
     st.caption("計算結果の図にある「ID (#1, #2...)」を見て、特定の箱だけ向きを変えたり、優先度を変えたりできます。")
@@ -391,8 +389,7 @@ if st.button("計算実行", type="primary", use_container_width=True):
     PW, PD, PH = pw_val, pd_val, ph_val
     MAX_W, OH = pm_val, oh_val
     
-    # 個別オーバーライド情報の整理
-    # キー: (商品名, ID番号) -> 値: {orient: ..., prio_mod: ...}
+    # オーバーライド情報の整理
     block_overrides = {}
     for _, row in block_override_df.iterrows():
         if row["商品名"] and row["ID(番号)"]:
@@ -402,9 +399,10 @@ if st.button("計算実行", type="primary", use_container_width=True):
                 "priority": row["優先度変更"]
             }
 
-    items = []
+    raw_items = []
     colors = ['#ff9999', '#99ccff', '#99ff99', '#ffff99', '#cc99ff', '#ffa07a', '#87cefa', '#f0e68c', '#dda0dd', '#90ee90'] 
     
+    # 1. まず全ての箱を1個単位で展開し、指示を適用
     for idx, row in edited_df.iterrows():
         try:
             name = str(row["商品名"])
@@ -420,7 +418,6 @@ if st.button("計算実行", type="primary", use_container_width=True):
             
             if n <= 0 or w <= 0: continue
 
-            # 基本チェック
             can_fit = (w <= PW and d <= PD) or (d <= PW and w <= PD)
             if not can_fit:
                 st.error(f"❌ {name} はサイズオーバーです。")
@@ -428,69 +425,144 @@ if st.button("計算実行", type="primary", use_container_width=True):
             
             col = colors[idx % len(colors)]
 
-            # ★ここで個別の箱（ブロック）を生成し、IDを付与する
             for i in range(n):
-                sub_id = i + 1 # 1始まりのID
+                sub_id = i + 1
                 
-                # オーバーライド確認
+                # オーバーライド
                 ovr = block_overrides.get((name, sub_id), {})
                 
-                # 1. 向きの決定
                 my_orient = base_orient
-                if ovr.get("rotate") == "縦にする":
-                    my_orient = "縦固定"
-                elif ovr.get("rotate") == "横にする":
-                    my_orient = "横固定"
+                if ovr.get("rotate") == "縦にする": my_orient = "縦固定"
+                elif ovr.get("rotate") == "横にする": my_orient = "横固定"
                 
-                # 縦固定ならw,dを最初から入れ替え
-                my_w, my_d = w, d
-                if my_orient == "縦固定":
-                    my_w, my_d = d, w
+                # 縦固定なら最初からw,dを入れ替え
+                # 横固定ならそのまま
+                # 自動ならそのまま保持
                 
-                # 2. 優先度の決定
+                # 実際に使う寸法 (fixed) と、自動回転用のオリジナル寸法
+                # 自動の場合はロジック内で回転を試みるので、ここでは orientフラグだけセット
+                
+                # 優先度
                 my_prio = base_prio
-                if ovr.get("priority") == "高くする(下に/先に)":
-                    my_prio += 100 # 大きく加算して先頭へ
-                elif ovr.get("priority") == "低くする(上に/後に)":
-                    my_prio -= 100 # 大きく減算して末尾へ
+                if ovr.get("priority") == "高くする(下に/先に)": my_prio += 100
+                elif ovr.get("priority") == "低くする(上に/後に)": my_prio -= 100
 
-                disp_name = f"{name} #{sub_id}"
-
-                items.append({
-                    'name': name, 'disp_name': disp_name, 
-                    'w': my_w, 'd': my_d, 'h': h, 
-                    'g': g, 'n': 1, 'col': col, 'id': idx, # n=1 (1個ずつ扱う)
-                    'prio': my_prio, 'orient': my_orient, 
-                    'orig_w': w, 'orig_d': d # 自動回転用
+                raw_items.append({
+                    'name': name, 'sub_id': sub_id,
+                    'w': w, 'd': d, 'h': h, 
+                    'g': g, 'col': col, 'p_id': idx,
+                    'prio': my_prio, 'orient': my_orient
                 })
 
         except ValueError:
             continue
 
-    if not items:
+    if not raw_items:
         st.error("計算可能な商品データがありません。")
     else:
-        # --- 計算ロジック ---
-        blocks = []
+        # 2. 展開したアイテムを「再度グループ化（ブロック化）」して計算ロジックに渡す
+        # これにより、指示のない連続した箱は「段積み」されるようになる
         
-        # アイテムリストは既に展開済み(n=1の集合)なので、そのままブロック化
-        for p in items:
-            # 1個ずつなので layers計算などはシンプルに
-            # 高さチェック
-            if p['h'] > PH: 
-                continue # 入らない
+        # まず優先度順などでソート
+        # ソート順: 優先度(降順) > 面積(降順) > 高さ(降順) > 名前 > ID
+        raw_items.sort(key=lambda x: (-x['prio'], -x['w']*x['d'], -x['h'], x['name'], x['sub_id']))
+        
+        grouped_blocks = []
+        if raw_items:
+            current_group = raw_items[0].copy()
+            current_group['count'] = 1
+            current_group['id_list'] = [raw_items[0]['sub_id']]
             
-            blocks.append({
-                'name':p['name'], 'disp_name':p['disp_name'], 
-                'w':p['w'], 'd':p['d'], 'h':p['h'], 'ly':1, 'g':p['g'], 'col':p['col'], 
-                'h_total':p['h'], 'child':None, 'z':0, 'p_id':p['id'],
-                'prio': p['prio'], 'orient': p['orient'], 'orig_w': p['orig_w'], 'orig_d': p['orig_d']
-            })
+            for item in raw_items[1:]:
+                # 同じグループにできる条件: 名前、サイズ、重量、優先度、向き指定がすべて同じ
+                is_same = (
+                    item['name'] == current_group['name'] and
+                    item['w'] == current_group['w'] and
+                    item['d'] == current_group['d'] and
+                    item['h'] == current_group['h'] and
+                    item['g'] == current_group['g'] and
+                    item['prio'] == current_group['prio'] and
+                    item['orient'] == current_group['orient']
+                )
+                
+                if is_same:
+                    current_group['count'] += 1
+                    current_group['id_list'].append(item['sub_id'])
+                else:
+                    grouped_blocks.append(current_group)
+                    current_group = item.copy()
+                    current_group['count'] = 1
+                    current_group['id_list'] = [item['sub_id']]
+            grouped_blocks.append(current_group)
 
-        # ソート順: 優先度(降順) > 面積(降順) > 高さ(降順)
+        # 3. ブロック生成 (ここで layers を計算し、元の効率的なロジックに戻す)
+        blocks = []
+        for grp in grouped_blocks:
+            # 向きの事前処理
+            eff_w, eff_d = grp['w'], grp['d']
+            if grp['orient'] == "縦固定":
+                eff_w, eff_d = grp['d'], grp['w']
+            
+            layers = max(1, int(PH // grp['h']))
+            full_stacks = int(grp['count'] // layers)
+            remainder = int(grp['count'] % layers)
+            
+            # IDリストを分割して割り当て
+            ids = grp['id_list']
+            current_id_idx = 0
+            
+            # フルスタック作成
+            for _ in range(full_stacks):
+                stack_ids = ids[current_id_idx : current_id_idx + layers]
+                current_id_idx += layers
+                
+                # 表示名作成: "商品A (#1-#5)" みたいに
+                if len(stack_ids) > 1:
+                    d_name = f"{grp['name']} (#{min(stack_ids)}-#{max(stack_ids)})"
+                else:
+                    d_name = f"{grp['name']} #{stack_ids[0]}"
+
+                blocks.append({
+                    'name': grp['name'],
+                    'disp_name': d_name,
+                    'w': eff_w, 'd': eff_d, 'h': grp['h'],
+                    'ly': layers, # ここで複数段積む！
+                    'g': grp['g'] * layers,
+                    'col': grp['col'],
+                    'h_total': grp['h'] * layers,
+                    'child': None, 'z': 0, 'p_id': grp['p_id'],
+                    'prio': grp['prio'],
+                    'orient': grp['orient'],
+                    'orig_w': grp['w'], 'orig_d': grp['d']
+                })
+            
+            # 端数スタック作成
+            if remainder > 0:
+                stack_ids = ids[current_id_idx : current_id_idx + remainder]
+                if len(stack_ids) > 1:
+                    d_name = f"{grp['name']} (#{min(stack_ids)}-#{max(stack_ids)})"
+                else:
+                    d_name = f"{grp['name']} #{stack_ids[0]}"
+
+                blocks.append({
+                    'name': grp['name'],
+                    'disp_name': d_name,
+                    'w': eff_w, 'd': eff_d, 'h': grp['h'],
+                    'ly': remainder,
+                    'g': grp['g'] * remainder,
+                    'col': grp['col'],
+                    'h_total': grp['h'] * remainder,
+                    'child': None, 'z': 0, 'p_id': grp['p_id'],
+                    'prio': grp['prio'],
+                    'orient': grp['orient'],
+                    'orig_w': grp['w'], 'orig_d': grp['d']
+                })
+
+        # --- 配置ロジック (前回作成した回転対応版そのまま) ---
+        
+        # ソート (優先度順)
         blocks.sort(key=lambda x: (-x['prio'], -x['w']*x['d'], -x['h_total']))
         
-        # 重ね積み（子ブロック）の処理
         merged_indices = set()
         for i in range(len(blocks)):
             if i in merged_indices: continue
@@ -506,6 +578,7 @@ if st.button("計算実行", type="primary", use_container_width=True):
                 can_stack = False
                 final_top_w, final_top_d = top['w'], top['d']
 
+                # 現状で乗るか
                 if (limit_w >= top['w'] and limit_d >= top['d']) or (limit_w >= top['d'] and limit_d >= top['w']):
                      if not (limit_w >= top['w'] and limit_d >= top['d']):
                          if top['orient'] == "横固定": pass 
@@ -516,6 +589,7 @@ if st.button("計算実行", type="primary", use_container_width=True):
                      else:
                          can_stack = True
                 
+                # 自動の場合、回転して乗るか
                 if not can_stack and top['orient'] == "自動":
                      rot_w, rot_d = top['d'], top['w']
                      if (limit_w >= rot_w and limit_d >= rot_d) or (limit_w >= rot_d and limit_d >= rot_w):
@@ -542,10 +616,8 @@ if st.button("計算実行", type="primary", use_container_width=True):
                 
                 temp_cx, temp_cy, temp_rh = p_state['cx'], p_state['cy'], p_state['rh']
                 
+                # 回転候補
                 try_orientations = []
-                # 固定済みならそのまま、自動なら両方試す
-                # ただし、アイテム生成時に既に orient指定で w,d はセットされている。
-                # 自動の場合のみ、逆向きも試す余地がある。
                 if blk['orient'] == "自動":
                     try_orientations = [(blk['w'], blk['d']), (blk['d'], blk['w'])]
                 else:
@@ -585,7 +657,7 @@ if st.button("計算実行", type="primary", use_container_width=True):
 
         st.session_state.results = [ps['items'] for ps in pallet_states]
         st.session_state.params = {'PW':PW, 'PD':PD, 'PH':PH, 'MAX_W':MAX_W, 'OH':OH}
-        st.session_state.input_products = items # リスト形式
+        st.session_state.input_products = items # 元の商品情報（リスト）は使わないが型合わせ
         st.session_state.calculated = True
 
 # --- 結果表示 ---
