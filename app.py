@@ -389,7 +389,6 @@ if st.button("計算実行", type="primary", use_container_width=True):
     PW, PD, PH = pw_val, pd_val, ph_val
     MAX_W, OH = pm_val, oh_val
     
-    # オーバーライド情報の整理
     block_overrides = {}
     for _, row in block_override_df.iterrows():
         if row["商品名"] and row["ID(番号)"]:
@@ -400,9 +399,9 @@ if st.button("計算実行", type="primary", use_container_width=True):
             }
 
     raw_items = []
+    items = [] # ★復活: PDF/集計用リスト
     colors = ['#ff9999', '#99ccff', '#99ff99', '#ffff99', '#cc99ff', '#ffa07a', '#87cefa', '#f0e68c', '#dda0dd', '#90ee90'] 
     
-    # 1. まず全ての箱を1個単位で展開し、指示を適用
     for idx, row in edited_df.iterrows():
         try:
             name = str(row["商品名"])
@@ -425,24 +424,21 @@ if st.button("計算実行", type="primary", use_container_width=True):
             
             col = colors[idx % len(colors)]
 
+            # ★集計用リストへの追加（PDF用）
+            items.append({
+                'name': name, 'w': w, 'd': d, 'h': h, 
+                'g': g, 'n': n, 'col': col, 'id': idx
+            })
+
+            # 計算用（個別展開）
             for i in range(n):
                 sub_id = i + 1
-                
-                # オーバーライド
                 ovr = block_overrides.get((name, sub_id), {})
                 
                 my_orient = base_orient
                 if ovr.get("rotate") == "縦にする": my_orient = "縦固定"
                 elif ovr.get("rotate") == "横にする": my_orient = "横固定"
                 
-                # 縦固定なら最初からw,dを入れ替え
-                # 横固定ならそのまま
-                # 自動ならそのまま保持
-                
-                # 実際に使う寸法 (fixed) と、自動回転用のオリジナル寸法
-                # 自動の場合はロジック内で回転を試みるので、ここでは orientフラグだけセット
-                
-                # 優先度
                 my_prio = base_prio
                 if ovr.get("priority") == "高くする(下に/先に)": my_prio += 100
                 elif ovr.get("priority") == "低くする(上に/後に)": my_prio -= 100
@@ -460,11 +456,7 @@ if st.button("計算実行", type="primary", use_container_width=True):
     if not raw_items:
         st.error("計算可能な商品データがありません。")
     else:
-        # 2. 展開したアイテムを「再度グループ化（ブロック化）」して計算ロジックに渡す
-        # これにより、指示のない連続した箱は「段積み」されるようになる
-        
-        # まず優先度順などでソート
-        # ソート順: 優先度(降順) > 面積(降順) > 高さ(降順) > 名前 > ID
+        # グループ化ロジック (同じ条件の箱をまとめてブロック化)
         raw_items.sort(key=lambda x: (-x['prio'], -x['w']*x['d'], -x['h'], x['name'], x['sub_id']))
         
         grouped_blocks = []
@@ -474,7 +466,6 @@ if st.button("計算実行", type="primary", use_container_width=True):
             current_group['id_list'] = [raw_items[0]['sub_id']]
             
             for item in raw_items[1:]:
-                # 同じグループにできる条件: 名前、サイズ、重量、優先度、向き指定がすべて同じ
                 is_same = (
                     item['name'] == current_group['name'] and
                     item['w'] == current_group['w'] and
@@ -495,10 +486,8 @@ if st.button("計算実行", type="primary", use_container_width=True):
                     current_group['id_list'] = [item['sub_id']]
             grouped_blocks.append(current_group)
 
-        # 3. ブロック生成 (ここで layers を計算し、元の効率的なロジックに戻す)
         blocks = []
         for grp in grouped_blocks:
-            # 向きの事前処理
             eff_w, eff_d = grp['w'], grp['d']
             if grp['orient'] == "縦固定":
                 eff_w, eff_d = grp['d'], grp['w']
@@ -507,16 +496,13 @@ if st.button("計算実行", type="primary", use_container_width=True):
             full_stacks = int(grp['count'] // layers)
             remainder = int(grp['count'] % layers)
             
-            # IDリストを分割して割り当て
             ids = grp['id_list']
             current_id_idx = 0
             
-            # フルスタック作成
             for _ in range(full_stacks):
                 stack_ids = ids[current_id_idx : current_id_idx + layers]
                 current_id_idx += layers
                 
-                # 表示名作成: "商品A (#1-#5)" みたいに
                 if len(stack_ids) > 1:
                     d_name = f"{grp['name']} (#{min(stack_ids)}-#{max(stack_ids)})"
                 else:
@@ -526,7 +512,7 @@ if st.button("計算実行", type="primary", use_container_width=True):
                     'name': grp['name'],
                     'disp_name': d_name,
                     'w': eff_w, 'd': eff_d, 'h': grp['h'],
-                    'ly': layers, # ここで複数段積む！
+                    'ly': layers,
                     'g': grp['g'] * layers,
                     'col': grp['col'],
                     'h_total': grp['h'] * layers,
@@ -536,7 +522,6 @@ if st.button("計算実行", type="primary", use_container_width=True):
                     'orig_w': grp['w'], 'orig_d': grp['d']
                 })
             
-            # 端数スタック作成
             if remainder > 0:
                 stack_ids = ids[current_id_idx : current_id_idx + remainder]
                 if len(stack_ids) > 1:
@@ -558,9 +543,6 @@ if st.button("計算実行", type="primary", use_container_width=True):
                     'orig_w': grp['w'], 'orig_d': grp['d']
                 })
 
-        # --- 配置ロジック (前回作成した回転対応版そのまま) ---
-        
-        # ソート (優先度順)
         blocks.sort(key=lambda x: (-x['prio'], -x['w']*x['d'], -x['h_total']))
         
         merged_indices = set()
@@ -578,7 +560,6 @@ if st.button("計算実行", type="primary", use_container_width=True):
                 can_stack = False
                 final_top_w, final_top_d = top['w'], top['d']
 
-                # 現状で乗るか
                 if (limit_w >= top['w'] and limit_d >= top['d']) or (limit_w >= top['d'] and limit_d >= top['w']):
                      if not (limit_w >= top['w'] and limit_d >= top['d']):
                          if top['orient'] == "横固定": pass 
@@ -589,7 +570,6 @@ if st.button("計算実行", type="primary", use_container_width=True):
                      else:
                          can_stack = True
                 
-                # 自動の場合、回転して乗るか
                 if not can_stack and top['orient'] == "自動":
                      rot_w, rot_d = top['d'], top['w']
                      if (limit_w >= rot_w and limit_d >= rot_d) or (limit_w >= rot_d and limit_d >= rot_w):
@@ -616,7 +596,6 @@ if st.button("計算実行", type="primary", use_container_width=True):
                 
                 temp_cx, temp_cy, temp_rh = p_state['cx'], p_state['cy'], p_state['rh']
                 
-                # 回転候補
                 try_orientations = []
                 if blk['orient'] == "自動":
                     try_orientations = [(blk['w'], blk['d']), (blk['d'], blk['w'])]
@@ -657,7 +636,7 @@ if st.button("計算実行", type="primary", use_container_width=True):
 
         st.session_state.results = [ps['items'] for ps in pallet_states]
         st.session_state.params = {'PW':PW, 'PD':PD, 'PH':PH, 'MAX_W':MAX_W, 'OH':OH}
-        st.session_state.input_products = items # 元の商品情報（リスト）は使わないが型合わせ
+        st.session_state.input_products = items # 復活させた items リストを保存
         st.session_state.calculated = True
 
 # --- 結果表示 ---
