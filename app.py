@@ -44,6 +44,29 @@ if font_file:
     fm.fontManager.addfont(font_file)
     plt.rc('font', family='IPAexGothic')
 
+# --- ID範囲解析関数 ---
+def parse_ids(id_str):
+    """ '1-3, 5' のような文字列を [1, 2, 3, 5] というリストに変換する """
+    if not id_str: return []
+    res = set()
+    try:
+        # 全角数字を半角に、スペース削除
+        id_str = str(id_str).replace('，', ',').replace('－', '-').replace(' ', '')
+        parts = id_str.split(',')
+        for p in parts:
+            if '-' in p:
+                start, end = p.split('-')
+                start, end = int(start), int(end)
+                if start > end: start, end = end, start
+                for i in range(start, end + 1):
+                    res.add(i)
+            else:
+                if p.isdigit():
+                    res.add(int(p))
+    except:
+        pass
+    return list(res)
+
 # --- トラック描画関数 ---
 def create_horizontal_trucks_figure(num_pallets):
     fig, ax = plt.subplots(2, 1, figsize=(6, 3))
@@ -361,7 +384,7 @@ edited_df = st.data_editor(
 # --- 個別の箱への指示設定 ---
 st.markdown("---")
 with st.expander("📝 詳細設定：箱ごとの個別指示（ID指定）", expanded=True):
-    st.caption("計算結果の図にある「ID (#1, #2...)」を見て、特定の箱だけ向きを変えたり、優先度を変えたりできます。")
+    st.caption("計算結果の図にある「ID (#1-#7 など)」を見て、特定の箱だけ向きを変えたり、優先度を変えたりできます。IDは「1-5, 8」のように範囲指定も可能です。")
     if 'block_override_data' not in st.session_state:
         st.session_state.block_override_data = pd.DataFrame(
             columns=["商品名", "ID(番号)", "回転指示", "優先度変更"]
@@ -376,7 +399,7 @@ with st.expander("📝 詳細設定：箱ごとの個別指示（ID指定）", e
         use_container_width=True,
         column_config={
             "商品名": st.column_config.SelectboxColumn("商品名", options=current_product_names, required=True),
-            "ID(番号)": st.column_config.NumberColumn("ID(番号)", min_value=1, step=1, required=True, help="図に表示されている #1 などの数字"),
+            "ID(番号)": st.column_config.TextColumn("ID(番号)", required=True, help="例: 1, 3-5 (数字とハイフンで範囲指定可能)"),
             "回転指示": st.column_config.SelectboxColumn("回転指示", options=["変更なし", "縦にする", "横にする"], required=True, default="変更なし"),
             "優先度変更": st.column_config.SelectboxColumn("優先度変更", options=["変更なし", "高くする(下に/先に)", "低くする(上に/後に)"], required=True, default="変更なし"),
         }
@@ -389,17 +412,20 @@ if st.button("計算実行", type="primary", use_container_width=True):
     PW, PD, PH = pw_val, pd_val, ph_val
     MAX_W, OH = pm_val, oh_val
     
+    # オーバーライド情報の整理 (ID範囲対応)
     block_overrides = {}
     for _, row in block_override_df.iterrows():
         if row["商品名"] and row["ID(番号)"]:
-            key = (str(row["商品名"]), int(row["ID(番号)"]))
-            block_overrides[key] = {
-                "rotate": row["回転指示"],
-                "priority": row["優先度変更"]
-            }
+            ids = parse_ids(row["ID(番号)"]) # 文字列をリストに変換
+            for i in ids:
+                key = (str(row["商品名"]), i)
+                block_overrides[key] = {
+                    "rotate": row["回転指示"],
+                    "priority": row["優先度変更"]
+                }
 
     raw_items = []
-    items = [] # ★復活: PDF/集計用リスト
+    items = [] # PDF/集計用リスト
     colors = ['#ff9999', '#99ccff', '#99ff99', '#ffff99', '#cc99ff', '#ffa07a', '#87cefa', '#f0e68c', '#dda0dd', '#90ee90'] 
     
     for idx, row in edited_df.iterrows():
@@ -424,7 +450,7 @@ if st.button("計算実行", type="primary", use_container_width=True):
             
             col = colors[idx % len(colors)]
 
-            # ★集計用リストへの追加（PDF用）
+            # 集計用リストへの追加（PDF用）
             items.append({
                 'name': name, 'w': w, 'd': d, 'h': h, 
                 'g': g, 'n': n, 'col': col, 'id': idx
@@ -636,7 +662,7 @@ if st.button("計算実行", type="primary", use_container_width=True):
 
         st.session_state.results = [ps['items'] for ps in pallet_states]
         st.session_state.params = {'PW':PW, 'PD':PD, 'PH':PH, 'MAX_W':MAX_W, 'OH':OH}
-        st.session_state.input_products = items # 復活させた items リストを保存
+        st.session_state.input_products = items # 復活済み
         st.session_state.calculated = True
 
 # --- 結果表示 ---
