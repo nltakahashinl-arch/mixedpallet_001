@@ -54,7 +54,7 @@ def get_empty_data():
     })
     return df
 
-# --- 描画関数 (5面図・詳細版) ---
+# --- 描画関数 (5面図・詳細版・不透明化修正) ---
 def draw_pallet_figure(PW, PD, PH, p_items, figsize=(18, 8)):
     fig = plt.figure(figsize=figsize)
     fig.patch.set_facecolor('white')
@@ -67,13 +67,13 @@ def draw_pallet_figure(PW, PD, PH, p_items, figsize=(18, 8)):
     ax_top.set_aspect('equal')
     ax_top.add_patch(patches.Rectangle((0,0), PW, PD, fill=False, lw=2))
     
-    # Z順にソートして描画
+    # Z順（下にあるものを先に描く）
     sorted_items_z = sorted(p_items, key=lambda x: x.get('z', 0))
     for b in sorted_items_z:
+        # alpha=1.0 (不透明) に変更
         ax_top.add_patch(patches.Rectangle((b['x'], b['y']), b['w'], b['d'], 
-                                           facecolor=b['col'], edgecolor='black', alpha=0.9))
+                                           facecolor=b['col'], edgecolor='black', alpha=1.0, linewidth=1))
         
-        # ID表示を短くする
         disp_id = b.get('sub_id', '')
         txt = f"{b['name']}\n#{disp_id}"
         ax_top.text(b['x'] + b['w']/2, b['y'] + b['d']/2, txt, ha='center', va='center', fontsize=8, color='black', clip_on=True)
@@ -87,31 +87,27 @@ def draw_pallet_figure(PW, PD, PH, p_items, figsize=(18, 8)):
         limit_h = PW if axis_h == 'x' else PD
         ax.add_patch(patches.Rectangle((0,0), limit_h, PH, fill=False, lw=2))
         
+        # 描画順序: 奥にあるものから先に描く (Painter's Algorithm)
+        # reverse_sort=True (降順) の場合、値が大きい順。
+        # 例: 正面図(Front)はY軸。手前がY=0なら、奥はY=Max。
+        # 奥(Y大)から描画し、手前(Y小)を重ねることで正しい見た目になる。
+        # なので reverse=True (降順) で正解。
+        
         sorted_items = sorted(items, key=lambda x: x[sort_key], reverse=reverse_sort)
         
-        # 手前にあるものを強調するためのフィルタ
-        if items:
-            vals = [b[sort_key] for b in items]
-            front_val = max(vals) if reverse_sort else min(vals)
-        else:
-            front_val = 0
-
         for b in sorted_items:
             h_pos = b[axis_h]
             v_pos = b[axis_v]
             w_size = b['w'] if axis_h == 'x' else b['d']
             h_size = b['h']
             
-            # 手前判定（簡易）
-            depth_pos = b[sort_key]
-            is_front = abs(depth_pos - front_val) <= 10
-            alpha_val = 1.0 if is_front else 0.4
-            
+            # alpha=1.0 (不透明) に変更
             ax.add_patch(patches.Rectangle((h_pos, v_pos), w_size, h_size, 
-                                           facecolor=b['col'], edgecolor='black', alpha=alpha_val))
+                                           facecolor=b['col'], edgecolor='black', alpha=1.0, linewidth=1))
             
-            if is_front:
-                ax.text(h_pos + w_size/2, v_pos + h_size/2, f"{b['name']}", ha='center', va='center', fontsize=7, color='black', clip_on=True)
+            # 不透明なので、隠れずに見えている部分に文字が出るとは限らないが、
+            # とりあえず中心に表示
+            ax.text(h_pos + w_size/2, v_pos + h_size/2, f"{b['name']}", ha='center', va='center', fontsize=7, color='black', clip_on=True)
 
         ax.set_xlim(-50, limit_h+50); ax.set_ylim(0, PH+100)
         ax.set_title(title, color='black', fontsize=10, fontweight='bold')
@@ -121,12 +117,15 @@ def draw_pallet_figure(PW, PD, PH, p_items, figsize=(18, 8)):
     plot_side_view(ax_front, 'x', 'z', p_items, 'y', True, "② 正面図 (Front)")
 
     ax_back = fig.add_subplot(gs[0, 2])
+    # 背面図: Y小(手前)から描いて、Y大(奥)を重ねる -> reverse=False (昇順)
     plot_side_view(ax_back, 'x', 'z', p_items, 'y', False, "③ 背面図 (Back)")
 
     ax_left = fig.add_subplot(gs[1, 1])
+    # 左側面: X大(右)から描いて、X小(左)を重ねる -> reverse=True
     plot_side_view(ax_left, 'y', 'z', p_items, 'x', True, "④ 左側面図 (Left)")
 
     ax_right = fig.add_subplot(gs[1, 2])
+    # 右側面: X小(左)から描いて、X大(右)を重ねる -> reverse=False
     plot_side_view(ax_right, 'y', 'z', p_items, 'x', False, "⑤ 右側面図 (Right)")
 
     plt.tight_layout()
@@ -185,7 +184,7 @@ with st.expander("パレット設定", expanded=True):
     pm_val = c_pm.number_input("Max重量(kg)", value=1000, step=10)
     oh_val = c_oh.number_input("重ね積み許容(mm)", value=30, step=5)
 
-# 2. 商品入力 (Excel風 UI復活)
+# 2. 商品入力 (Excel風 UI)
 st.subheader("商品情報入力")
 st.info("💡 Excelからコピー＆ペースト可能です。")
 
@@ -231,8 +230,7 @@ def run_optimization():
             
             col = colors[idx % len(colors)]
             
-            # 手動移動のために、あえて「1個ずつ」のオブジェクトとして生成するが、
-            # ソートは「面積順」で行い、効率的な積み付けを目指す。
+            # 手動移動のために、あえて「1個ずつ」のオブジェクトとして生成
             for i in range(n):
                 raw_items.append({
                     'name': name,
@@ -299,7 +297,6 @@ def run_optimization():
                     # 物理安定性チェック (Z>0の場合、直下に支持体が必要)
                     if cz > 0:
                         supported = False
-                        # 重心(中心)が下の荷物に乗っているか
                         center_x = cx + tw / 2
                         center_y = cy + td / 2
                         for exist in p['items']:
@@ -365,7 +362,7 @@ if st.session_state.calculated and st.session_state.results:
             total_w = sum([it['g'] for it in items])
             st.caption(f"商品数: {len(items)}個 | 総重量: {total_w:.1f} kg")
             
-            # 5面図の描画 (ここを復活させました)
+            # 5面図の描画 (不透明版)
             fig = draw_pallet_figure(params['PW'], params['PD'], params['PH'], items)
             st.pyplot(fig)
     
