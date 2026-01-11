@@ -54,7 +54,7 @@ def get_empty_data():
     })
     return df
 
-# --- 視認性判定関数 (重なりチェック) ---
+# --- 視認性判定関数 ---
 def is_visible(target, others, view_type):
     tx, ty, tz, tw, td, th = target['x'], target['y'], target['z'], target['w'], target['d'], target['h']
     
@@ -85,14 +85,13 @@ def is_visible(target, others, view_type):
 
     return True
 
-# --- 描画関数 (5面図・不透明・バグ修正版) ---
+# --- 描画関数 ---
 def draw_pallet_figure(PW, PD, PH, p_items, figsize=(18, 8)):
     fig = plt.figure(figsize=figsize)
     fig.patch.set_facecolor('white')
     
     gs = fig.add_gridspec(2, 3, width_ratios=[1.2, 1, 1], height_ratios=[1, 1])
 
-    # 共通描画ロジック
     def plot_view(ax, view_type, axis_h, axis_v, items, sort_key, reverse_sort, title):
         ax.set_facecolor('white')
         limit_h = PW if axis_h == 'x' else PD
@@ -117,9 +116,7 @@ def draw_pallet_figure(PW, PD, PH, p_items, figsize=(18, 8)):
                 ax.text(h_pos + w_size/2, v_pos + h_size/2, txt, 
                         ha='center', va='center', fontsize=font_sz, color='black', clip_on=True)
 
-        # 【修正箇所】戻り値が表示されないように一行ずつ記述
         ax.set_xlim(-50, limit_h+50)
-        
         if view_type == 'top':
             ax.set_ylim(limit_v+50, -50)
         else:
@@ -385,13 +382,19 @@ if st.session_state.calculated and st.session_state.results:
                 value = (p_idx, it_idx)
                 move_options.append((label, value))
         
+        # 1. 移動する商品を選択
         selected_src = c1.selectbox("1. 移動する商品", options=[m[1] for m in move_options], 
                                     format_func=lambda x: [m[0] for m in move_options if m[1]==x][0])
         
+        # 2. 移動先パレット (【修正】初期値を移動元と同じパレットにする)
+        default_dst_idx = selected_src[0]
+        
         pallet_options = list(range(len(results))) + [len(results)]
-        dst_p_idx = c2.selectbox("2. 移動先パレット", options=pallet_options, 
+        dst_p_idx = c2.selectbox("2. 移動先パレット", options=pallet_options,
+                                 index=default_dst_idx, 
                                  format_func=lambda x: f"パレット {x+1}" if x < len(results) else "新規パレット作成")
 
+        # 3. 配置場所（土台）
         dst_base_options = [("床 (空きスペースに追加)", None)]
         if dst_p_idx < len(results):
             for it_idx, it in enumerate(results[dst_p_idx]):
