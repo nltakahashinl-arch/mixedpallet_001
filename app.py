@@ -15,11 +15,6 @@ from reportlab.lib.utils import ImageReader
 # --- ページ設定 (ワイド表示) ---
 st.set_page_config(layout="wide", page_title="パレット積載シミュレーター")
 
-# ログアウトボタン
-if st.sidebar.button("ログアウト"):
-    st.session_state.authenticated = False
-    st.rerun()
-
 # --- フォント準備 ---
 @st.cache_resource
 def setup_font():
@@ -50,7 +45,6 @@ def parse_ids(id_str):
     if not id_str: return []
     res = set()
     try:
-        # 全角数字を半角に、スペース削除
         id_str = str(id_str).replace('，', ',').replace('－', '-').replace(' ', '')
         parts = id_str.split(',')
         for p in parts:
@@ -483,6 +477,7 @@ if st.button("計算実行", type="primary", use_container_width=True):
         st.error("計算可能な商品データがありません。")
     else:
         # グループ化ロジック (同じ条件の箱をまとめてブロック化)
+        # 【重要】ここで底面積が大きい順に並び替え（効率化の鍵）
         raw_items.sort(key=lambda x: (-x['prio'], -x['w']*x['d'], -x['h'], x['name'], x['sub_id']))
         
         grouped_blocks = []
@@ -569,6 +564,7 @@ if st.button("計算実行", type="primary", use_container_width=True):
                     'orig_w': grp['w'], 'orig_d': grp['d']
                 })
 
+        # 【重要】積み込み直前にも面積順でソート（これが効きます）
         blocks.sort(key=lambda x: (-x['prio'], -x['w']*x['d'], -x['h_total']))
         
         merged_indices = set()
@@ -662,7 +658,7 @@ if st.button("計算実行", type="primary", use_container_width=True):
 
         st.session_state.results = [ps['items'] for ps in pallet_states]
         st.session_state.params = {'PW':PW, 'PD':PD, 'PH':PH, 'MAX_W':MAX_W, 'OH':OH}
-        st.session_state.input_products = items # 復活済み
+        st.session_state.input_products = items
         st.session_state.calculated = True
 
 # --- 結果表示 ---
