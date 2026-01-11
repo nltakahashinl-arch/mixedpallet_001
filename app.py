@@ -412,11 +412,9 @@ if st.button("計算実行", type="primary", use_container_width=True):
     PW, PD, PH = pw_val, pd_val, ph_val
     MAX_W, OH = pm_val, oh_val
     
-    # 前回の計算結果（フリーズ用）
     frozen_states = st.session_state.get('frozen_states', {})
     new_frozen_states = {} 
 
-    # オーバーライド情報の整理
     block_overrides = {}
     for _, row in block_override_df.iterrows():
         if row["商品名"] and row["ID(番号)"]:
@@ -434,6 +432,9 @@ if st.button("計算実行", type="primary", use_container_width=True):
     items = [] 
     colors = ['#ff9999', '#99ccff', '#99ff99', '#ffff99', '#cc99ff', '#ffa07a', '#87cefa', '#f0e68c', '#dda0dd', '#90ee90'] 
     
+    # --- 【修正】同名商品の通し番号管理用 ---
+    name_counters = {} 
+
     for idx, row in edited_df.iterrows():
         try:
             name = str(row["商品名"])
@@ -457,26 +458,26 @@ if st.button("計算実行", type="primary", use_container_width=True):
             col = colors[idx % len(colors)]
             items.append({'name': name, 'w': w, 'd': d, 'h': h, 'g': g, 'n': n, 'col': col, 'id': idx})
 
+            # 現在の通し番号を取得
+            current_count = name_counters.get(name, 0)
+
             for i in range(n):
-                sub_id = i + 1
+                # IDを通し番号で生成 (#1~#140 のようにユニークにする)
+                sub_id = current_count + i + 1
+                
                 ovr = block_overrides.get((name, sub_id), {})
                 
-                # --- 1. 向きの決定 (フリーズ機能付き) ---
                 my_orient = base_orient
-                
-                # 指示があれば最優先
                 if ovr.get("rotate") == "縦にする":
                     my_orient = "縦固定"
                 elif ovr.get("rotate") == "横にする":
                     my_orient = "横固定"
                 else:
-                    # 指示がない場合、前回の結果を継承(フリーズ)
                     prev_state = frozen_states.get((name, sub_id))
                     if prev_state:
                         if prev_state == "vertical": my_orient = "縦固定"
                         elif prev_state == "horizontal": my_orient = "横固定"
 
-                # --- 2. 優先度とパレット指定 ---
                 my_prio = base_prio
                 if ovr.get("priority") == "高くする(下に/先に)": my_prio += 100
                 elif ovr.get("priority") == "低くする(上に/後に)": my_prio -= 100
@@ -491,6 +492,9 @@ if st.button("計算実行", type="primary", use_container_width=True):
                     'target_pallet': target_pallet,
                     'orig_w': w, 'orig_d': d
                 })
+            
+            # カウンタ更新
+            name_counters[name] = current_count + n
 
         except ValueError:
             continue
@@ -498,7 +502,6 @@ if st.button("計算実行", type="primary", use_container_width=True):
     if not raw_items:
         st.error("計算可能な商品データがありません。")
     else:
-        # グループ化ロジック
         raw_items.sort(key=lambda x: (-x['prio'], x['p_id'], x['sub_id']))
         
         grouped_blocks = []
@@ -532,7 +535,6 @@ if st.button("計算実行", type="primary", use_container_width=True):
         blocks = []
         for grp in grouped_blocks:
             eff_w, eff_d = grp['orig_w'], grp['orig_d']
-            # 固定指示があれば寸法確定、なければオリジナルのままで後で回転試行
             if grp['orient'] == "縦固定":
                 eff_w, eff_d = grp['orig_d'], grp['orig_w']
             elif grp['orient'] == "横固定":
@@ -548,6 +550,7 @@ if st.button("計算実行", type="primary", use_container_width=True):
             for _ in range(full_stacks):
                 stack_ids = ids[current_id_idx : current_id_idx + layers]
                 current_id_idx += layers
+                
                 d_name = f"{grp['name']} (#{min(stack_ids)}-#{max(stack_ids)})" if len(stack_ids) > 1 else f"{grp['name']} #{stack_ids[0]}"
 
                 blocks.append({
@@ -592,15 +595,11 @@ if st.button("計算実行", type="primary", use_container_width=True):
                 can_stack = False
                 final_top_w, final_top_d = top['w'], top['d']
 
-                # 重ねる際の回転チェック
                 if top['orient'] == "自動":
-                    # 自動ならどちらの向きでも重なるかチェック
-                    # 1. 今の向き
                     if (limit_w >= top['w'] and limit_d >= top['d']) or (limit_w >= top['d'] and limit_d >= top['w']):
                         if not (limit_w >= top['w'] and limit_d >= top['d']):
                             final_top_w, final_top_d = top['d'], top['w']
                         can_stack = True
-                    # 2. 90度回転した向き (まだ試してない場合)
                     if not can_stack:
                         rot_w, rot_d = top['d'], top['w']
                         if (limit_w >= rot_w and limit_d >= rot_d) or (limit_w >= rot_d and limit_d >= rot_w):
@@ -610,10 +609,8 @@ if st.button("計算実行", type="primary", use_container_width=True):
                                 final_top_w, final_top_d = rot_w, rot_d
                             can_stack = True
                 else:
-                    # 固定の場合は今の向きでチェック
                     if (limit_w >= top['w'] and limit_d >= top['d']) or (limit_w >= top['d'] and limit_d >= top['w']):
                          if not (limit_w >= top['w'] and limit_d >= top['d']):
-                             # 固定なのに収まらない場合はNG（ここでは強制回転させない）
                              pass
                          else:
                              can_stack = True
@@ -645,35 +642,24 @@ if st.button("計算実行", type="primary", use_container_width=True):
                 
                 temp_cx, temp_cy, temp_rh = p_state['cx'], p_state['cy'], p_state['rh']
                 
-                # --- 配置候補の検索（Best Fit） ---
                 candidates = []
-                
                 if blk['orient'] == "自動":
-                    # 自動なら縦横両方試す
                     candidates = [(blk['orig_w'], blk['orig_d']), (blk['orig_d'], blk['orig_w'])]
                 else:
-                    # 固定ならその向きだけ
                     candidates = [(blk['w'], blk['d'])]
 
-                # 候補の中から「最も良い配置」を探す
-                possible_fits = [] # (type, width, depth, rh_diff)
+                possible_fits = [] 
                 
                 for tw, td in candidates:
-                    # 1. 既存列に追加 (最優先)
                     if temp_cx + tw <= PW and temp_cy + td <= PD:
-                        # 既存列配置のスコア: 0 (最高)
-                        # サブスコア: 高さの差が小さいほど良い？いや、とりあえず入ればOK
                         possible_fits.append({
                             'type': 0, 'w': tw, 'd': td, 
-                            'rh': max(temp_rh, td), # 更新後の行高さ
+                            'rh': max(temp_rh, td),
                             'cx': temp_cx, 'cy': temp_cy
                         })
                     
-                    # 2. 改行して追加
                     elif temp_cy + temp_rh + td <= PD:
                         if tw <= PW:
-                            # 改行配置のスコア: 1 (次点)
-                            # サブスコア: 新しい行の高さ(td)が小さい方が、奥行きを節約できるので良い
                             possible_fits.append({
                                 'type': 1, 'w': tw, 'd': td,
                                 'rh': td,
@@ -681,7 +667,6 @@ if st.button("計算実行", type="primary", use_container_width=True):
                             })
 
                 if possible_fits:
-                    # ソート: type昇順(既存列優先) -> rh昇順(奥行き節約)
                     best = sorted(possible_fits, key=lambda x: (x['type'], x['rh']))[0]
                     
                     blk['w'], blk['d'] = best['w'], best['d']
@@ -689,11 +674,10 @@ if st.button("計算実行", type="primary", use_container_width=True):
                     
                     p_state['items'].append(blk); p_state['cur_g'] += w_total
                     
-                    # 状態更新
-                    if best['type'] == 0: # 既存列
+                    if best['type'] == 0:
                         p_state['cx'] += best['w']
                         p_state['rh'] = best['rh']
-                    else: # 改行
+                    else:
                         p_state['cx'] = best['w']
                         p_state['cy'] = best['cy']
                         p_state['rh'] = best['rh']
@@ -701,9 +685,7 @@ if st.button("計算実行", type="primary", use_container_width=True):
                     placed = True; break
             
             if not placed:
-                # 新規パレット
                 if target_p is None:
-                    # 自動なら、幅に収まりやすい向きを選ぶ（簡易最適化）
                     fin_w, fin_d = blk['orig_w'], blk['orig_d']
                     if blk['orient'] == "自動":
                         if fin_w > PW and fin_d <= PW:
@@ -715,7 +697,6 @@ if st.button("計算実行", type="primary", use_container_width=True):
                     new_state = {'items': [blk], 'cur_g': w_total, 'cx': blk['w'], 'cy': 0, 'rh': blk['d']}
                     blk['x'] = 0; blk['y'] = 0; blk['z'] = 0; pallet_states.append(new_state)
 
-        # --- 結果保存 & フリーズ状態の更新 ---
         st.session_state.results = [ps['items'] for ps in pallet_states]
         st.session_state.params = {'PW':PW, 'PD':PD, 'PH':PH, 'MAX_W':MAX_W, 'OH':OH}
         st.session_state.input_products = items
@@ -724,8 +705,6 @@ if st.button("計算実行", type="primary", use_container_width=True):
         new_frozen_states = {}
         for ps in pallet_states:
             for item in ps['items']:
-                # 実際に置かれた向きを判定
-                # 幅がオリジナルの奥行きと一致し、かつ正方形でない場合 -> 縦とみなす
                 is_vertical = (item['w'] == item['orig_d'] and item['w'] != item['orig_w'])
                 determined = "vertical" if is_vertical else "horizontal"
                 for i_id in item['ids']:
