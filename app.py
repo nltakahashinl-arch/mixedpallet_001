@@ -71,8 +71,6 @@ def create_horizontal_trucks_figure(num_pallets):
     fig.patch.set_facecolor('white')
 
     SCALE = 1/100
-    PALLET_W = 1100 * SCALE
-    PALLET_D = 1100 * SCALE
     TRUCK_W_BODY = 2400 * SCALE
     MAX_L_10T = 9600 * SCALE
     CABIN_L = 1500 * SCALE
@@ -115,16 +113,18 @@ def create_horizontal_trucks_figure(num_pallets):
             ax_obj.add_patch(patches.Rectangle((tx, TRUCK_W_BODY), tire_w, tire_h, fc='#333333', ec='black'))
             ax_obj.add_patch(patches.Rectangle((tx, -tire_h), tire_w, tire_h, fc='#333333', ec='black'))
 
+        PALLET_D_IMG = 1100 * SCALE 
+        MARGIN_IMG = 50 * SCALE
         for i in range(max_p):
             c_idx = i % 2; r_idx = i // 2
-            px = MARGIN + (r_idx * (PALLET_D + MARGIN))
-            py = (TRUCK_W_BODY / 2) - PALLET_W - (MARGIN/2) if c_idx == 0 else (TRUCK_W_BODY / 2) + (MARGIN/2)
+            px = MARGIN_IMG + (r_idx * (PALLET_D_IMG + MARGIN_IMG))
+            py = (TRUCK_W_BODY / 2) - PALLET_D_IMG - (MARGIN_IMG/2) if c_idx == 0 else (TRUCK_W_BODY / 2) + (MARGIN_IMG/2)
             
-            ax_obj.add_patch(patches.Rectangle((px, py), PALLET_W, PALLET_D, fill=False, ec='silver', linestyle=':'))
+            ax_obj.add_patch(patches.Rectangle((px, py), PALLET_D_IMG, PALLET_D_IMG, fill=False, ec='silver', linestyle=':'))
             if i < current_p:
                 color = '#90EE90' if truck_type == '10t' else '#87CEEB'
-                ax_obj.add_patch(patches.Rectangle((px, py), PALLET_W, PALLET_D, fc=color, ec='black', alpha=0.8))
-                ax_obj.text(px + PALLET_W/2, py + PALLET_D/2, f"P{i+1}", ha='center', va='center', fontsize=6, fontweight='bold', color='black')
+                ax_obj.add_patch(patches.Rectangle((px, py), PALLET_D_IMG, PALLET_D_IMG, fc=color, ec='black', alpha=0.8))
+                ax_obj.text(px + PALLET_D_IMG/2, py + PALLET_D_IMG/2, f"P{i+1}", ha='center', va='center', fontsize=6, fontweight='bold', color='black')
 
     draw_truck_h(ax[0], '4t', 10, num_pallets)
     draw_truck_h(ax[1], '10t', 16, num_pallets)
@@ -352,6 +352,8 @@ col_btn1, col_btn2 = st.columns([1, 1])
 with col_btn1:
     if st.button("🗑️ 全てクリア (入力を空にする)", use_container_width=True):
         del st.session_state['df_products']
+        if 'frozen_states' in st.session_state:
+            del st.session_state['frozen_states'] # リセット時は履歴も消す
         st.session_state.df_products = get_empty_data()
         st.session_state.editor_key += 1
         st.rerun()
@@ -382,10 +384,10 @@ edited_df = st.data_editor(
 # --- 個別の箱への指示設定 ---
 st.markdown("---")
 with st.expander("📝 詳細設定：箱ごとの個別指示（ID指定）", expanded=True):
-    st.caption("計算結果の図にある「ID (#1-#7 など)」を見て、特定の箱だけ向きを変えたり、優先度を変えたりできます。IDは「1-5, 8」のように範囲指定も可能です。")
+    st.caption("IDは「1-5, 8」のように範囲指定も可能です。「指定パレットへ移動」を設定すると、そのパレットに空きがある限りそこに配置されます。")
     if 'block_override_data' not in st.session_state:
         st.session_state.block_override_data = pd.DataFrame(
-            columns=["商品名", "ID(番号)", "回転指示", "優先度変更"]
+            columns=["商品名", "ID(番号)", "回転指示", "優先度変更", "指定パレットへ移動"]
         )
     
     current_product_names = edited_df["商品名"].unique().tolist()
@@ -400,6 +402,7 @@ with st.expander("📝 詳細設定：箱ごとの個別指示（ID指定）", e
             "ID(番号)": st.column_config.TextColumn("ID(番号)", required=True, help="例: 1, 3-5 (数字とハイフンで範囲指定可能)"),
             "回転指示": st.column_config.SelectboxColumn("回転指示", options=["変更なし", "縦にする", "横にする"], required=True, default="変更なし"),
             "優先度変更": st.column_config.SelectboxColumn("優先度変更", options=["変更なし", "高くする(下に/先に)", "低くする(上に/後に)"], required=True, default="変更なし"),
+            "指定パレットへ移動": st.column_config.NumberColumn("指定パレットへ移動", min_value=0, step=1, help="0または空欄なら自動配置。数字を入れるとそのパレット番号に配置を試みます。"),
         }
     )
 
@@ -410,19 +413,26 @@ if st.button("計算実行", type="primary", use_container_width=True):
     PW, PD, PH = pw_val, pd_val, ph_val
     MAX_W, OH = pm_val, oh_val
     
+    # 前回の計算結果（フリーズ用）を取得
+    frozen_states = st.session_state.get('frozen_states', {})
+    new_frozen_states = {} # 今回の結果を保存用
+
+    # オーバーライド情報の整理
     block_overrides = {}
     for _, row in block_override_df.iterrows():
         if row["商品名"] and row["ID(番号)"]:
             ids = parse_ids(row["ID(番号)"])
+            target_p = int(row["指定パレットへ移動"]) if pd.notna(row["指定パレットへ移動"]) and row["指定パレットへ移動"] > 0 else None
             for i in ids:
                 key = (str(row["商品名"]), i)
                 block_overrides[key] = {
                     "rotate": row["回転指示"],
-                    "priority": row["優先度変更"]
+                    "priority": row["優先度変更"],
+                    "target_pallet": target_p
                 }
 
     raw_items = []
-    items = [] # PDF/集計用リスト
+    items = [] # PDF用
     colors = ['#ff9999', '#99ccff', '#99ff99', '#ffff99', '#cc99ff', '#ffa07a', '#87cefa', '#f0e68c', '#dda0dd', '#90ee90'] 
     
     for idx, row in edited_df.iterrows():
@@ -446,31 +456,43 @@ if st.button("計算実行", type="primary", use_container_width=True):
                 continue
             
             col = colors[idx % len(colors)]
-
-            # 集計用リストへの追加
-            items.append({
-                'name': name, 'w': w, 'd': d, 'h': h, 
-                'g': g, 'n': n, 'col': col, 'id': idx
-            })
+            items.append({'name': name, 'w': w, 'd': d, 'h': h, 'g': g, 'n': n, 'col': col, 'id': idx})
 
             # 計算用（個別展開）
             for i in range(n):
                 sub_id = i + 1
                 ovr = block_overrides.get((name, sub_id), {})
                 
+                # --- 1. 向きの決定 ---
                 my_orient = base_orient
-                if ovr.get("rotate") == "縦にする": my_orient = "縦固定"
-                elif ovr.get("rotate") == "横にする": my_orient = "横固定"
                 
+                # A. ユーザーの明示的な指示があれば最優先
+                if ovr.get("rotate") == "縦にする":
+                    my_orient = "縦固定"
+                elif ovr.get("rotate") == "横にする":
+                    my_orient = "横固定"
+                else:
+                    # B. 指示がない場合、前回の結果（フリーズ）を参照
+                    # 前回 "縦" だったなら、今回も "縦固定" にしてあげる
+                    prev_state = frozen_states.get((name, sub_id))
+                    if prev_state:
+                        # 前回結果を継承 (ただしユーザーが全体設定を変えてたらそっち優先もありうるが、今回は安定性重視)
+                        if prev_state == "vertical": my_orient = "縦固定"
+                        elif prev_state == "horizontal": my_orient = "横固定"
+
+                # --- 2. 優先度とパレット指定 ---
                 my_prio = base_prio
                 if ovr.get("priority") == "高くする(下に/先に)": my_prio += 100
                 elif ovr.get("priority") == "低くする(上に/後に)": my_prio -= 100
+                
+                target_pallet = ovr.get("target_pallet") # None or int
 
                 raw_items.append({
                     'name': name, 'sub_id': sub_id,
                     'w': w, 'd': d, 'h': h, 
                     'g': g, 'col': col, 'p_id': idx,
-                    'prio': my_prio, 'orient': my_orient
+                    'prio': my_prio, 'orient': my_orient,
+                    'target_pallet': target_pallet
                 })
 
         except ValueError:
@@ -479,8 +501,8 @@ if st.button("計算実行", type="primary", use_container_width=True):
     if not raw_items:
         st.error("計算可能な商品データがありません。")
     else:
-        # --- 重要: 並び順を「優先度」→「ID順」で厳格化 ---
-        # これにより、指示のない「自動」ブロックが勝手に割り込むのを防ぐ
+        # グループ化ロジック (同じ条件の箱をまとめてブロック化)
+        # ソート順に target_pallet も含めることで、パレット指定が違うものは別グループになる
         raw_items.sort(key=lambda x: (-x['prio'], x['p_id'], x['sub_id']))
         
         grouped_blocks = []
@@ -497,7 +519,8 @@ if st.button("計算実行", type="primary", use_container_width=True):
                     item['h'] == current_group['h'] and
                     item['g'] == current_group['g'] and
                     item['prio'] == current_group['prio'] and
-                    item['orient'] == current_group['orient']
+                    item['orient'] == current_group['orient'] and
+                    item['target_pallet'] == current_group['target_pallet'] # パレット指定も一致条件
                 )
                 
                 if is_same:
@@ -513,7 +536,6 @@ if st.button("計算実行", type="primary", use_container_width=True):
         blocks = []
         for grp in grouped_blocks:
             eff_w, eff_d = grp['w'], grp['d']
-            # 固定指示があればここで寸法確定
             if grp['orient'] == "縦固定":
                 eff_w, eff_d = grp['d'], grp['w']
             elif grp['orient'] == "横固定":
@@ -547,7 +569,9 @@ if st.button("計算実行", type="primary", use_container_width=True):
                     'prio': grp['prio'],
                     'orient': grp['orient'],
                     'orig_w': grp['w'], 'orig_d': grp['d'],
-                    'min_sub_id': min(stack_ids) # ソート安定用
+                    'min_sub_id': min(stack_ids),
+                    'ids': stack_ids, # 構成IDリスト
+                    'target_pallet': grp['target_pallet']
                 })
             
             if remainder > 0:
@@ -569,11 +593,11 @@ if st.button("計算実行", type="primary", use_container_width=True):
                     'prio': grp['prio'],
                     'orient': grp['orient'],
                     'orig_w': grp['w'], 'orig_d': grp['d'],
-                    'min_sub_id': min(stack_ids)
+                    'min_sub_id': min(stack_ids),
+                    'ids': stack_ids,
+                    'target_pallet': grp['target_pallet']
                 })
 
-        # ブロック配置順のソート: 優先度 -> 元の行番号 -> 箱の番号
-        # これで「勝手に割り込む」のを防ぐ
         blocks.sort(key=lambda x: (-x['prio'], x['p_id'], x['min_sub_id']))
         
         merged_indices = set()
@@ -585,24 +609,27 @@ if st.button("計算実行", type="primary", use_container_width=True):
             for j in range(i + 1, len(blocks)):
                 if j in merged_indices: continue
                 top = blocks[j]
+                
+                # パレット指定が違う者同士は重ねない（管理が複雑になるため）
+                if base['target_pallet'] != top['target_pallet']: continue
+
                 if top['h_total'] > base['h_total']: continue
                 if (base['h_total'] + top['h_total'] > PH): continue
                 
                 can_stack = False
                 final_top_w, final_top_d = top['w'], top['d']
 
+                # 重ねる際のサイズチェック
                 if (limit_w >= top['w'] and limit_d >= top['d']) or (limit_w >= top['d'] and limit_d >= top['w']):
                      if not (limit_w >= top['w'] and limit_d >= top['d']):
-                         if top['orient'] == "自動":
-                             # 自動なら回転して乗せる
+                         if top['orient'] == "横固定": pass 
+                         elif top['orient'] == "縦固定": pass
+                         else: 
                              final_top_w, final_top_d = top['d'], top['w']
                              can_stack = True
-                         elif top['orient'] == "縦固定": pass
-                         elif top['orient'] == "横固定": pass
                      else:
                          can_stack = True
                 
-                # 自動の場合、回転トライ
                 if not can_stack and top['orient'] == "自動":
                      rot_w, rot_d = top['d'], top['w']
                      if (limit_w >= rot_w and limit_d >= rot_d) or (limit_w >= rot_d and limit_d >= rot_w):
@@ -624,17 +651,33 @@ if st.button("計算実行", type="primary", use_container_width=True):
             w_total = blk['g'] + (blk['child']['g'] if blk['child'] else 0)
             placed = False
             
-            for p_idx, p_state in enumerate(pallet_states):
+            # --- 配置試行 ---
+            # パレット指定がある場合、そのパレット番号(index+1)のみを対象にする
+            target_p = blk['target_pallet']
+            
+            start_p_idx = 0
+            end_p_idx = len(pallet_states)
+            
+            if target_p is not None:
+                # 指定パレットが存在しない場合、そこまでパレットを埋める必要がある
+                while len(pallet_states) < target_p:
+                    pallet_states.append({'items': [], 'cur_g': 0.0, 'cx': 0, 'cy': 0, 'rh': 0})
+                
+                # そのパレットだけをチェック対象に
+                start_p_idx = target_p - 1
+                end_p_idx = target_p
+            
+            # 既存パレットチェック
+            for p_idx in range(start_p_idx, end_p_idx):
+                p_state = pallet_states[p_idx]
                 if p_state['cur_g'] + w_total > MAX_W: continue
                 
                 temp_cx, temp_cy, temp_rh = p_state['cx'], p_state['cy'], p_state['rh']
                 
                 try_orientations = []
                 if blk['orient'] == "自動":
-                    # 自動：まずは「元の向き(横)」を試す -> ダメなら「縦」
                     try_orientations = [(blk['orig_w'], blk['orig_d']), (blk['orig_d'], blk['orig_w'])]
                 else:
-                    # 固定：今の向きだけ
                     try_orientations = [(blk['w'], blk['d'])]
 
                 best_fit = None
@@ -660,22 +703,36 @@ if st.button("計算実行", type="primary", use_container_width=True):
                     placed = True; break
             
             if not placed:
+                # 新規パレットが必要だが、パレット指定がある場合は「入らなかった」ことになる
+                if target_p is not None:
+                    # 指定パレットに入りきらない -> 警告を出すか、あきらめて次のパレット（ターゲット+1）に置くか
+                    # ここでは「指定パレットより後ろならOK」として新規作成を許可する
+                    pass
+
                 fin_w, fin_d = blk['w'], blk['d']
                 if blk['orient'] == "自動":
-                    # 新規パレットでも「基本は横」
-                    fin_w, fin_d = blk['orig_w'], blk['orig_d']
-                    # ただし、幅が入らないなら回転
-                    if fin_w > PW and fin_d <= PW:
-                        fin_w, fin_d = blk['orig_d'], blk['orig_w']
+                    if blk['w'] > PW and blk['d'] <= PW:
+                        fin_w, fin_d = blk['d'], blk['w']
                 
                 blk['w'], blk['d'] = fin_w, fin_d
                 new_state = {'items': [blk], 'cur_g': w_total, 'cx': blk['w'], 'cy': 0, 'rh': blk['d']}
                 blk['x'] = 0; blk['y'] = 0; blk['z'] = 0; pallet_states.append(new_state)
 
+        # --- 結果保存 & フリーズ状態の更新 ---
         st.session_state.results = [ps['items'] for ps in pallet_states]
         st.session_state.params = {'PW':PW, 'PD':PD, 'PH':PH, 'MAX_W':MAX_W, 'OH':OH}
-        st.session_state.input_products = items 
+        st.session_state.input_products = items
         st.session_state.calculated = True
+        
+        # 今回の結果から「確定した向き」を保存
+        for ps in pallet_states:
+            for item in ps['items']:
+                # 実際に置かれた向きを保存
+                determined = "vertical" if (item['w'] == item['orig_d'] and item['w'] != item['orig_w']) else "horizontal"
+                for i_id in item['ids']:
+                    new_frozen_states[(item['name'], i_id)] = determined
+                    
+        st.session_state.frozen_states = new_frozen_states
 
 # --- 結果表示 ---
 if st.session_state.get('calculated', False):
