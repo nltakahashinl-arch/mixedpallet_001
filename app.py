@@ -1,758 +1,195 @@
-import streamlit as st
-import matplotlib.pyplot as plt
-import matplotlib.patches as patches
-import io
-import os
-import urllib.request
-import zipfile
-import pandas as pd
-from reportlab.pdfgen import canvas
-from reportlab.lib.pagesizes import A4
-from reportlab.pdfbase import pdfmetrics
-from reportlab.pdfbase.ttfonts import TTFont
-from reportlab.lib.utils import ImageReader
+import operator
 
-# --- ページ設定 (ワイド表示) ---
-st.set_page_config(layout="wide", page_title="パレット積載シミュレーター")
+class Item:
+    def __init__(self, item_id, width, depth, height, weight):
+        self.item_id = item_id
+        self.width = width
+        self.depth = depth
+        self.height = height
+        self.weight = weight
+        # 積載時の座標と回転状態
+        self.x = 0
+        self.y = 0
+        self.z = 0
+        self.rotated = False
 
-# ログアウトボタン
-if st.sidebar.button("ログアウト"):
-    st.session_state.authenticated = False
-    st.rerun()
+    @property
+    def area(self):
+        return self.width * self.depth
 
-# --- フォント準備 ---
-@st.cache_resource
-def setup_font():
-    font_path = "ipaexg.ttf"
-    if not os.path.exists(font_path):
-        url = "https://moji.or.jp/wp-content/ipafont/IPAexfont/ipaexg00401.zip"
-        zip_name = "ipaexg00401.zip"
-        try:
-            urllib.request.urlretrieve(url, zip_name)
-            with zipfile.ZipFile(zip_name, 'r') as z:
-                z.extractall(".")
-            extracted_path = "ipaexg00401/ipaexg.ttf"
-            if os.path.exists(extracted_path):
-                os.replace(extracted_path, font_path)
-        except Exception:
-            pass
-    return font_path
+    @property
+    def volume(self):
+        return self.width * self.depth * self.height
 
-font_file = setup_font()
-if font_file:
-    import matplotlib.font_manager as fm
-    fm.fontManager.addfont(font_file)
-    plt.rc('font', family='IPAexGothic')
+    def get_dimension(self):
+        # 回転状態に応じて現在のW, Dを返す
+        if self.rotated:
+            return self.depth, self.width, self.height
+        return self.width, self.depth, self.height
 
-# --- ID範囲解析関数 ---
-def parse_ids(id_str):
-    if not id_str: return []
-    res = set()
-    try:
-        id_str = str(id_str).replace('，', ',').replace('－', '-').replace(' ', '')
-        parts = id_str.split(',')
-        for p in parts:
-            if '-' in p:
-                start, end = p.split('-')
-                start, end = int(start), int(end)
-                if start > end: start, end = end, start
-                for i in range(start, end + 1):
-                    res.add(i)
-            else:
-                if p.isdigit():
-                    res.add(int(p))
-    except:
-        pass
-    return list(res)
+class Pallet:
+    def __init__(self, max_w, max_d, max_h, max_weight):
+        self.max_w = max_w
+        self.max_d = max_d
+        self.max_h = max_h
+        self.max_weight = max_weight
+        self.items = []
 
-# --- トラック描画関数 ---
-def create_horizontal_trucks_figure(num_pallets):
-    fig, ax = plt.subplots(2, 1, figsize=(6, 3))
-    fig.patch.set_facecolor('white')
+    def current_weight(self):
+        return sum(item.weight for item in self.items)
 
-    SCALE = 1/100
-    PALLET_D_IMG = 1100 * SCALE 
-    TRUCK_W_BODY = 2400 * SCALE
-    MAX_L_10T = 9600 * SCALE
-    CABIN_L = 1500 * SCALE
-    MARGIN_IMG = 50 * SCALE
+    def is_overlap(self, x, y, z, w, d, h):
+        # 既存のアイテムと重ならないかチェック
+        for item in self.items:
+            iw, id_, ih = item.get_dimension()
+            # 3次元での衝突判定
+            if (x < item.x + iw and x + w > item.x and
+                y < item.y + id_ and y + d > item.y and
+                z < item.z + ih and z + h > item.z):
+                return True
+        return False
 
-    LIMIT_X_MIN = -CABIN_L - 10
-    LIMIT_X_MAX = MAX_L_10T + 20
-    LIMIT_Y_MIN = -15
-    LIMIT_Y_MAX = TRUCK_W_BODY + 20
+    def can_place(self, item, x, y, z, rotated):
+        # 回転状態でのサイズ取得
+        w, d, h = (item.depth, item.width, item.height) if rotated else (item.width, item.depth, item.height)
 
-    def draw_truck_h(ax_obj, truck_type, max_p, current_p):
-        ax_obj.set_facecolor('white')
-        if truck_type == '4t':
-            TRUCK_L = 6200 * SCALE
-            color_cab = '#87CEEB'
-            label = "4t (Max 10)"
-        else:
-            TRUCK_L = 9600 * SCALE
-            color_cab = '#FFB6C1'
-            label = "10t (Max 16)"
-
-        ax_obj.set_xlim(LIMIT_X_MIN, LIMIT_X_MAX)
-        ax_obj.set_ylim(LIMIT_Y_MIN, LIMIT_Y_MAX)
-        ax_obj.set_aspect('equal')
-        ax_obj.axis('off')
-        ax_obj.set_title(label, fontsize=10, fontweight='bold', loc='left', color='black')
-
-        ax_obj.add_patch(patches.FancyBboxPatch((-CABIN_L, 0), CABIN_L-2, TRUCK_W_BODY, boxstyle="round,pad=0.2", fc='white', ec='black', lw=1.0))
-        ax_obj.add_patch(patches.Rectangle((-CABIN_L + 2, 2), 8, TRUCK_W_BODY-4, fc=color_cab, ec='black'))
-        ax_obj.plot([-CABIN_L+5, -CABIN_L+5], [TRUCK_W_BODY, TRUCK_W_BODY+3], color='black', lw=1.5)
-        ax_obj.plot([-CABIN_L+5, -CABIN_L+5], [0, -3], color='black', lw=1.5)
-
-        ax_obj.add_patch(patches.Rectangle((0, 0), TRUCK_L, TRUCK_W_BODY, fc='#F5F5F5', ec='black', lw=1.0))
-        ax_obj.plot([0, TRUCK_L], [TRUCK_W_BODY+3, TRUCK_W_BODY+3], color='silver', linestyle='--')
-        ax_obj.plot([0, TRUCK_L], [-3, -3], color='silver', linestyle='--')
-
-        tire_w = 12; tire_h = 6
-        tire_x = [-CABIN_L + 15, TRUCK_L - 15] if truck_type == '4t' else [-CABIN_L + 15, TRUCK_L - 25, TRUCK_L - 12]
-        for tx in tire_x:
-            ax_obj.add_patch(patches.Rectangle((tx, TRUCK_W_BODY), tire_w, tire_h, fc='#333333', ec='black'))
-            ax_obj.add_patch(patches.Rectangle((tx, -tire_h), tire_w, tire_h, fc='#333333', ec='black'))
-
-        for i in range(max_p):
-            c_idx = i % 2; r_idx = i // 2
-            px = MARGIN_IMG + (r_idx * (PALLET_D_IMG + MARGIN_IMG))
-            py = (TRUCK_W_BODY / 2) - PALLET_D_IMG - (MARGIN_IMG/2) if c_idx == 0 else (TRUCK_W_BODY / 2) + (MARGIN_IMG/2)
-            
-            ax_obj.add_patch(patches.Rectangle((px, py), PALLET_D_IMG, PALLET_D_IMG, fill=False, ec='silver', linestyle=':'))
-            if i < current_p:
-                color = '#90EE90' if truck_type == '10t' else '#87CEEB'
-                ax_obj.add_patch(patches.Rectangle((px, py), PALLET_D_IMG, PALLET_D_IMG, fc=color, ec='black', alpha=0.8))
-                ax_obj.text(px + PALLET_D_IMG/2, py + PALLET_D_IMG/2, f"P{i+1}", ha='center', va='center', fontsize=6, fontweight='bold', color='black')
-
-    draw_truck_h(ax[0], '4t', 10, num_pallets)
-    draw_truck_h(ax[1], '10t', 16, num_pallets)
-    plt.tight_layout()
-    return fig
-
-# --- パレット詳細図描画 (5面図) ---
-def draw_pallet_figure(PW, PD, PH, p_items, figsize=(18, 8)):
-    fig = plt.figure(figsize=figsize)
-    fig.patch.set_facecolor('white')
-    
-    gs = fig.add_gridspec(2, 3, width_ratios=[1.2, 1, 1], height_ratios=[1, 1])
-
-    ax_top = fig.add_subplot(gs[:, 0])
-    ax_top.set_facecolor('white')
-    ax_top.set_aspect('equal')
-    ax_top.add_patch(patches.Rectangle((0,0), PW, PD, fill=False, lw=2))
-    
-    sorted_items_z = sorted(p_items, key=lambda x: x.get('z', 0))
-    for b in sorted_items_z:
-        ax_top.add_patch(patches.Rectangle((b['x'], b['y']), b['w'], b['d'], facecolor=b['col'], edgecolor='black', alpha=0.9))
-        txt = f"{b['disp_name']}\n{b['ly']}段" 
-        if b.get('child'): txt += f"\n(上:{b['child']['disp_name']})"
-        ax_top.text(b['x'] + b['w']/2, b['y'] + b['d']/2, txt, ha='center', va='center', fontsize=8, color='black')
-    ax_top.set_xlim(-50, PW+50); ax_top.set_ylim(-50, PD+50); ax_top.invert_yaxis()
-    ax_top.set_title("① 上面図 (Top)", color='black', fontsize=12, fontweight='bold')
-
-    def plot_side_view(ax, axis_h, axis_v, items, sort_key, reverse_sort, title, label_func):
-        ax.set_facecolor('white')
-        limit_h = PW if axis_h == 'x' else PD
-        ax.add_patch(patches.Rectangle((0,0), limit_h, PH, fill=False, lw=2))
+        # 1. パレット範囲内か
+        if x + w > self.max_w or y + d > self.max_d or z + h > self.max_h:
+            return False
         
-        sorted_items = sorted(items, key=lambda x: x[sort_key], reverse=reverse_sort)
+        # 2. 重量制限
+        if self.current_weight() + item.weight > self.max_weight:
+            return False
 
-        if items:
-            min_depth = min([b[sort_key] for b in items])
-            max_depth = max([b[sort_key] for b in items])
-            front_val = max_depth if reverse_sort else min_depth
-        else:
-            front_val = 0
+        # 3. 他の商品との重なり
+        if self.is_overlap(x, y, z, w, d, h):
+            return False
 
-        for b in sorted_items:
-            z_base = b.get('z', 0)
-            h_pos = b[axis_h]
-            w_size = b['w'] if axis_h == 'x' else b['d']
-            
-            depth_pos = b[sort_key]
-            is_front = abs(depth_pos - front_val) <= 10
-            
-            alpha_val = 1.0 if is_front else 0.3
-            lw_val = 1.5 if is_front else 0.5
+        # 4. 空中に浮いていないか（簡易サポート判定）
+        # Z=0 (床)ならOK。それ以外は直下に支持体が必要。
+        # ※厳密な物理シミュレーションではなく、接触面積チェックで簡易判定
+        if z > 0:
+            supported = False
+            for prev in self.items:
+                pw, pd, ph = prev.get_dimension()
+                # 直下(prevの上面が今のzと同じ)にあり、かつ重なりがあるか
+                if (prev.z + ph == z and
+                    x < prev.x + pw and x + w > prev.x and
+                    y < prev.y + pd and y + d > prev.y):
+                    supported = True
+                    break
+            if not supported:
+                return False
 
-            for ly in range(b['ly']):
-                y_pos = z_base + ly * b['h']
-                ax.add_patch(patches.Rectangle((h_pos, y_pos), w_size, b['h'], 
-                    facecolor=b['col'], edgecolor='black', alpha=alpha_val, lw=lw_val))
-            
-            center_h = h_pos + w_size/2
-            center_v = z_base + b['h_total']/2
-            ax.text(center_h, center_v, label_func(b), ha='center', va='center', fontsize=7, color='black')
+        return True
 
-            if b.get('child'):
-                c = b['child']
-                c_h_pos = b[axis_h]
-                c_w_size = c['w'] if axis_h == 'x' else c['d']
-                c_base = z_base + b['h_total']
-                for ly in range(c['ly']):
-                    y_pos = c_base + ly * c['h']
-                    ax.add_patch(patches.Rectangle((c_h_pos, y_pos), c_w_size, c['h'], 
-                        facecolor=c['col'], edgecolor='black', alpha=alpha_val, lw=lw_val))
-
-        ax.set_xlim(-50, limit_h+50); ax.set_ylim(0, PH+100)
-        ax.set_title(title, color='black', fontsize=10, fontweight='bold')
-
-    lbl = lambda b: b['disp_name']
-
-    ax_front = fig.add_subplot(gs[0, 1])
-    plot_side_view(ax_front, 'x', 'z', p_items, 'y', True, "② 正面図 (Front)", lbl)
-
-    ax_back = fig.add_subplot(gs[0, 2])
-    plot_side_view(ax_back, 'x', 'z', p_items, 'y', False, "③ 背面図 (Back)", lbl)
-
-    ax_left = fig.add_subplot(gs[1, 1])
-    plot_side_view(ax_left, 'y', 'z', p_items, 'x', True, "④ 左側面図 (Left)", lbl)
-
-    ax_right = fig.add_subplot(gs[1, 2])
-    plot_side_view(ax_right, 'y', 'z', p_items, 'x', False, "⑤ 右側面図 (Right)", lbl)
-
-    plt.tight_layout()
-    return fig
-
-# --- PDF生成 ---
-def create_pdf(current_pallets, current_params, truck_img_bytes, input_products):
-    buffer = io.BytesIO()
-    if os.path.exists('ipaexg.ttf'):
-        pdfmetrics.registerFont(TTFont('IPAexGothic', 'ipaexg.ttf'))
-        font_name = "IPAexGothic"
-    else:
-        font_name = "Helvetica"
-
-    c = canvas.Canvas(buffer, pagesize=A4)
-    w_a4, h_a4 = A4
-
-    c.setFont(font_name, 20)
-    c.drawString(40, h_a4 - 50, "パレット積載シミュレーション報告書")
-
-    disp_h = 0
-    if truck_img_bytes:
-        truck_img_bytes.seek(0)
-        img = ImageReader(truck_img_bytes)
-        iw, ih = img.getSize()
-        aspect = ih / float(iw)
-        disp_w = 180
-        disp_h = disp_w * aspect
-        c.drawImage(img, w_a4 - disp_w - 20, h_a4 - 50 - disp_h - 10, width=disp_w, height=disp_h, preserveAspectRatio=True)
-
-    c.setFont(font_name, 12)
-    total_p = len(current_pallets)
-    truck_4t = total_p / 10.0
-    truck_10t = total_p / 16.0
-
-    text_y = h_a4 - 90
-    c.drawString(40, text_y, f"必要パレット総数: {total_p} 枚")
-    text_y -= 20
-    c.drawString(40, text_y, f"  (目安: 4t車 {truck_4t:.1f}台 / 10t車 {truck_10t:.1f}台)")
-    text_y -= 25
-    c.drawString(40, text_y, f"パレット: {current_params['PW']}x{current_params['PD']}x{current_params['PH']}mm")
-    text_y -= 15
-    c.drawString(40, text_y, f"Max {current_params['MAX_W']}kg /許容: {current_params['OH']}mm")
-
-    text_y -= 40
-    c.drawString(40, text_y, "■ 入力商品情報")
-    text_y -= 15
-    c.setFont(font_name, 10)
-    for p in input_products:
-        if p['n'] > 0:
-            txt = f"{p['name']}: {p['w']}x{p['d']}x{p['h']}mm, {p['g']}kg, {p['n']}個"
-            c.drawString(50, text_y, txt)
-            text_y -= 12
-
-    bottom_of_truck = h_a4 - 50 - disp_h - 10
-    start_y_p1 = min(text_y - 40, bottom_of_truck - 30)
-    y = start_y_p1
-    
-    margin_bottom = 50
-
-    PW = current_params['PW']; PD = current_params['PD']; PH = current_params['PH']
-
-    for i, p_items in enumerate(current_pallets):
-        img_h_pdf = 200
-        req_h = 15 + 15 + img_h_pdf + 20 
+    def add_item(self, item):
+        # 空間探索分解能 (mm) - 小さいほど精密だが遅い
+        step = 10 
         
-        if y - req_h < margin_bottom:
-            c.showPage()
-            c.setFont(font_name, 12)
-            y = h_a4 - 50
+        # Z軸（高さ）方向へ積み上げ
+        # 既存アイテムの天面高さ候補リストを作成してループを減らす
+        z_candidates = [0] + [i.z + i.get_dimension()[2] for i in self.items]
+        z_candidates = sorted(list(set(z_candidates)))
 
-        p_weight = sum([b['g'] + (b['child']['g'] if b['child'] else 0) for b in p_items])
-        cnt = {}
-        for b in p_items:
-            cnt[b['disp_name']] = cnt.get(b['disp_name'], 0) + b['ly']
-            if b.get('child'): cnt[b['child']['disp_name']] = cnt.get(b['child']['disp_name'], 0) + b['child']['ly']
-        d_str = ", ".join([f"{k}:{v}個" for k,v in cnt.items()])
-
-        c.setFont(font_name, 12)
-        c.drawString(40, y, f"■ パレット {i+1}  (重量: {p_weight}kg)")
-        
-        c.setFont(font_name, 9)
-        c.drawString(240, y, f"内訳: {d_str}")
-
-        fig = draw_pallet_figure(PW, PD, PH, p_items, figsize=(12, 6))
-        img_buf = io.BytesIO()
-        fig.savefig(img_buf, format='png', bbox_inches='tight')
-        img_buf.seek(0); plt.close(fig)
-        img = ImageReader(img_buf)
-
-        c.drawImage(img, 40, y - 10 - img_h_pdf, width=520, height=img_h_pdf, preserveAspectRatio=True)
-        y -= (15 + img_h_pdf + 20)
-
-    c.save()
-    buffer.seek(0)
-    return buffer
-
-# --------------------------------
-# メイン UI
-# --------------------------------
-
-st.title("📦 パレット積載シミュレーター")
-
-# --- 1. パレット設定 ---
-with st.expander("パレット設定", expanded=True):
-    c_pw, c_pd, c_ph, c_pm, c_oh = st.columns(5)
-    pw_val = c_pw.number_input("幅 (mm)", value=1100, step=10)
-    pd_val = c_pd.number_input("奥行 (mm)", value=1100, step=10)
-    ph_val = c_ph.number_input("高さ (mm)", value=1700, step=10)
-    pm_val = c_pm.number_input("Max重量(kg)", value=1000, step=10)
-    oh_val = c_oh.number_input("重ね積み許容(mm)", value=30, step=5)
-
-st.markdown("---")
-
-# --- 2. 商品入力 (Excel貼り付け対応) ---
-st.subheader("商品情報入力")
-st.info("💡 Excelからコピーして、表の左上のセルを選択し `Ctrl+V` で貼り付けられます。")
-
-if 'editor_key' not in st.session_state:
-    st.session_state.editor_key = 0
-
-def get_empty_data():
-    df = pd.DataFrame({
-        "商品名": pd.Series([""] * 15, dtype="str"),
-        "幅(mm)": pd.Series([0]*15, dtype="int"),
-        "奥行(mm)": pd.Series([0]*15, dtype="int"),
-        "高さ(mm)": pd.Series([0]*15, dtype="int"),
-        "重量(kg)": pd.Series([0.0]*15, dtype="float"),
-        "数量": pd.Series([0]*15, dtype="int"),
-        "優先度": pd.Series([1]*15, dtype="int"),
-        "配置向き": pd.Series(["自動"]*15, dtype="str")
-    })
-    return df
-
-if 'df_products' not in st.session_state:
-    st.session_state.df_products = get_empty_data()
-
-col_btn1, col_btn2 = st.columns([1, 1])
-with col_btn1:
-    if st.button("🗑️ 全てクリア (入力を空にする)", use_container_width=True):
-        del st.session_state['df_products']
-        if 'frozen_states' in st.session_state:
-            del st.session_state['frozen_states']
-        st.session_state.df_products = get_empty_data()
-        st.session_state.editor_key += 1
-        st.rerun()
-
-st.session_state.df_products["商品名"] = st.session_state.df_products["商品名"].astype(str)
-
-column_order = ["商品名", "幅(mm)", "奥行(mm)", "高さ(mm)", "重量(kg)", "数量", "優先度", "配置向き"]
-
-edited_df = st.data_editor(
-    st.session_state.df_products,
-    key=f"data_editor_{st.session_state.editor_key}",
-    num_rows="dynamic",
-    use_container_width=True,
-    hide_index=True,
-    column_order=column_order,
-    column_config={
-        "商品名": st.column_config.TextColumn("商品名", width="large", required=True, default="", validate="^.*$"),
-        "幅(mm)": st.column_config.NumberColumn("幅(mm)", min_value=0, format="%d"),
-        "奥行(mm)": st.column_config.NumberColumn("奥行(mm)", min_value=0, format="%d"),
-        "高さ(mm)": st.column_config.NumberColumn("高さ(mm)", min_value=0, format="%d"),
-        "重量(kg)": st.column_config.NumberColumn("重量(kg)", min_value=0.0, format="%.1f"),
-        "数量": st.column_config.NumberColumn("数量", min_value=0, format="%d"),
-        "優先度": st.column_config.NumberColumn("優先度(大=先)", min_value=1, max_value=100, step=1, help="数字が大きいほど先に（下に）配置されます"),
-        "配置向き": st.column_config.SelectboxColumn("配置向き", options=["自動", "横固定", "縦固定"], required=True, default="自動", help="商品全体の基本ルール"),
-    }
-)
-
-# --- 個別の箱への指示設定 ---
-st.markdown("---")
-with st.expander("📝 詳細設定：箱ごとの個別指示（ID指定）", expanded=True):
-    st.caption("IDは「1-5, 8」のように範囲指定も可能です。「指定パレットへ移動」を設定すると、そのパレットに空きがある限りそこに配置されます。")
-    if 'block_override_data' not in st.session_state:
-        st.session_state.block_override_data = pd.DataFrame(
-            columns=["商品名", "ID(番号)", "回転指示", "優先度変更", "指定パレットへ移動"]
-        )
-    
-    current_product_names = edited_df["商品名"].unique().tolist()
-    current_product_names = [n for n in current_product_names if n and n != "nan" and n.strip()]
-
-    block_override_df = st.data_editor(
-        st.session_state.block_override_data,
-        num_rows="dynamic",
-        use_container_width=True,
-        column_config={
-            "商品名": st.column_config.SelectboxColumn("商品名", options=current_product_names, required=True),
-            "ID(番号)": st.column_config.TextColumn("ID(番号)", required=True, help="例: 1, 3-5 (数字とハイフンで範囲指定可能)"),
-            "回転指示": st.column_config.SelectboxColumn("回転指示", options=["変更なし", "縦にする", "横にする"], required=True, default="変更なし"),
-            "優先度変更": st.column_config.SelectboxColumn("優先度変更", options=["変更なし", "高くする(下に/先に)", "低くする(上に/後に)"], required=True, default="変更なし"),
-            "指定パレットへ移動": st.column_config.NumberColumn("指定パレットへ移動", min_value=0, step=1, help="0または空欄なら自動配置。"),
-        }
-    )
-
-st.markdown("---")
-
-# --- 計算実行ボタン ---
-if st.button("計算実行", type="primary", use_container_width=True):
-    PW, PD, PH = pw_val, pd_val, ph_val
-    MAX_W, OH = pm_val, oh_val
-    
-    frozen_states = st.session_state.get('frozen_states', {})
-    new_frozen_states = {} 
-
-    block_overrides = {}
-    for _, row in block_override_df.iterrows():
-        if row["商品名"] and row["ID(番号)"]:
-            ids = parse_ids(row["ID(番号)"])
-            target_p = int(row["指定パレットへ移動"]) if pd.notna(row["指定パレットへ移動"]) and row["指定パレットへ移動"] > 0 else None
-            for i in ids:
-                key = (str(row["商品名"]), i)
-                block_overrides[key] = {
-                    "rotate": row["回転指示"],
-                    "priority": row["優先度変更"],
-                    "target_pallet": target_p
-                }
-
-    raw_items = []
-    items = [] 
-    colors = ['#ff9999', '#99ccff', '#99ff99', '#ffff99', '#cc99ff', '#ffa07a', '#87cefa', '#f0e68c', '#dda0dd', '#90ee90'] 
-    
-    # --- 【修正】同名商品の通し番号管理用 ---
-    name_counters = {} 
-
-    for idx, row in edited_df.iterrows():
-        try:
-            name = str(row["商品名"])
-            if not name or name == "nan" or not name.strip(): continue
-                
-            w = int(row["幅(mm)"])
-            d = int(row["奥行(mm)"])
-            h = int(row["高さ(mm)"])
-            g = float(row["重量(kg)"])
-            n = int(row["数量"])
-            base_prio = int(row["優先度"]) if "優先度" in row else 1
-            base_orient = str(row["配置向き"]) if "配置向き" in row else "自動"
+        for z in z_candidates:
+            if z + item.height > self.max_h:
+                break
             
-            if n <= 0 or w <= 0: continue
-
-            can_fit = (w <= PW and d <= PD) or (d <= PW and w <= PD)
-            if not can_fit:
-                st.error(f"❌ {name} はサイズオーバーです。")
-                continue
-            
-            col = colors[idx % len(colors)]
-            items.append({'name': name, 'w': w, 'd': d, 'h': h, 'g': g, 'n': n, 'col': col, 'id': idx})
-
-            # 現在の通し番号を取得
-            current_count = name_counters.get(name, 0)
-
-            for i in range(n):
-                # IDを通し番号で生成 (#1~#140 のようにユニークにする)
-                sub_id = current_count + i + 1
-                
-                ovr = block_overrides.get((name, sub_id), {})
-                
-                my_orient = base_orient
-                if ovr.get("rotate") == "縦にする":
-                    my_orient = "縦固定"
-                elif ovr.get("rotate") == "横にする":
-                    my_orient = "横固定"
-                else:
-                    prev_state = frozen_states.get((name, sub_id))
-                    if prev_state:
-                        if prev_state == "vertical": my_orient = "縦固定"
-                        elif prev_state == "horizontal": my_orient = "横固定"
-
-                my_prio = base_prio
-                if ovr.get("priority") == "高くする(下に/先に)": my_prio += 100
-                elif ovr.get("priority") == "低くする(上に/後に)": my_prio -= 100
-                
-                target_pallet = ovr.get("target_pallet") 
-
-                raw_items.append({
-                    'name': name, 'sub_id': sub_id,
-                    'w': w, 'd': d, 'h': h, 
-                    'g': g, 'col': col, 'p_id': idx,
-                    'prio': my_prio, 'orient': my_orient,
-                    'target_pallet': target_pallet,
-                    'orig_w': w, 'orig_d': d
-                })
-            
-            # カウンタ更新
-            name_counters[name] = current_count + n
-
-        except ValueError:
-            continue
-
-    if not raw_items:
-        st.error("計算可能な商品データがありません。")
-    else:
-        raw_items.sort(key=lambda x: (-x['prio'], x['p_id'], x['sub_id']))
-        
-        grouped_blocks = []
-        if raw_items:
-            current_group = raw_items[0].copy()
-            current_group['count'] = 1
-            current_group['id_list'] = [raw_items[0]['sub_id']]
-            
-            for item in raw_items[1:]:
-                is_same = (
-                    item['name'] == current_group['name'] and
-                    item['w'] == current_group['w'] and
-                    item['d'] == current_group['d'] and
-                    item['h'] == current_group['h'] and
-                    item['g'] == current_group['g'] and
-                    item['prio'] == current_group['prio'] and
-                    item['orient'] == current_group['orient'] and
-                    item['target_pallet'] == current_group['target_pallet']
-                )
-                
-                if is_same:
-                    current_group['count'] += 1
-                    current_group['id_list'].append(item['sub_id'])
-                else:
-                    grouped_blocks.append(current_group)
-                    current_group = item.copy()
-                    current_group['count'] = 1
-                    current_group['id_list'] = [item['sub_id']]
-            grouped_blocks.append(current_group)
-
-        blocks = []
-        for grp in grouped_blocks:
-            eff_w, eff_d = grp['orig_w'], grp['orig_d']
-            if grp['orient'] == "縦固定":
-                eff_w, eff_d = grp['orig_d'], grp['orig_w']
-            elif grp['orient'] == "横固定":
-                eff_w, eff_d = grp['orig_w'], grp['orig_d']
-            
-            layers = max(1, int(PH // grp['h']))
-            full_stacks = int(grp['count'] // layers)
-            remainder = int(grp['count'] % layers)
-            
-            ids = grp['id_list']
-            current_id_idx = 0
-            
-            for _ in range(full_stacks):
-                stack_ids = ids[current_id_idx : current_id_idx + layers]
-                current_id_idx += layers
-                
-                d_name = f"{grp['name']} (#{min(stack_ids)}-#{max(stack_ids)})" if len(stack_ids) > 1 else f"{grp['name']} #{stack_ids[0]}"
-
-                blocks.append({
-                    'name': grp['name'], 'disp_name': d_name,
-                    'w': eff_w, 'd': eff_d, 'h': grp['h'], 'ly': layers,
-                    'g': grp['g'] * layers, 'col': grp['col'],
-                    'h_total': grp['h'] * layers, 'child': None, 'z': 0, 'p_id': grp['p_id'],
-                    'prio': grp['prio'], 'orient': grp['orient'],
-                    'orig_w': grp['orig_w'], 'orig_d': grp['orig_d'],
-                    'min_sub_id': min(stack_ids), 'ids': stack_ids, 'target_pallet': grp['target_pallet']
-                })
-            
-            if remainder > 0:
-                stack_ids = ids[current_id_idx : current_id_idx + remainder]
-                d_name = f"{grp['name']} (#{min(stack_ids)}-#{max(stack_ids)})" if len(stack_ids) > 1 else f"{grp['name']} #{stack_ids[0]}"
-
-                blocks.append({
-                    'name': grp['name'], 'disp_name': d_name,
-                    'w': eff_w, 'd': eff_d, 'h': grp['h'], 'ly': remainder,
-                    'g': grp['g'] * remainder, 'col': grp['col'],
-                    'h_total': grp['h'] * remainder, 'child': None, 'z': 0, 'p_id': grp['p_id'],
-                    'prio': grp['prio'], 'orient': grp['orient'],
-                    'orig_w': grp['orig_w'], 'orig_d': grp['orig_d'],
-                    'min_sub_id': min(stack_ids), 'ids': stack_ids, 'target_pallet': grp['target_pallet']
-                })
-
-        blocks.sort(key=lambda x: (-x['prio'], x['p_id'], x['min_sub_id']))
-        
-        merged_indices = set()
-        for i in range(len(blocks)):
-            if i in merged_indices: continue
-            base = blocks[i]
-            limit_w = base['w'] + (OH * 2); limit_d = base['d'] + (OH * 2)
-            
-            for j in range(i + 1, len(blocks)):
-                if j in merged_indices: continue
-                top = blocks[j]
-                if base['target_pallet'] != top['target_pallet']: continue
-                if top['h_total'] > base['h_total']: continue
-                if (base['h_total'] + top['h_total'] > PH): continue
-                
-                can_stack = False
-                final_top_w, final_top_d = top['w'], top['d']
-
-                if top['orient'] == "自動":
-                    if (limit_w >= top['w'] and limit_d >= top['d']) or (limit_w >= top['d'] and limit_d >= top['w']):
-                        if not (limit_w >= top['w'] and limit_d >= top['d']):
-                            final_top_w, final_top_d = top['d'], top['w']
-                        can_stack = True
-                    if not can_stack:
-                        rot_w, rot_d = top['d'], top['w']
-                        if (limit_w >= rot_w and limit_d >= rot_d) or (limit_w >= rot_d and limit_d >= rot_w):
-                            if not (limit_w >= rot_w and limit_d >= rot_d):
-                                final_top_w, final_top_d = rot_d, rot_w
-                            else:
-                                final_top_w, final_top_d = rot_w, rot_d
-                            can_stack = True
-                else:
-                    if (limit_w >= top['w'] and limit_d >= top['d']) or (limit_w >= top['d'] and limit_d >= top['w']):
-                         if not (limit_w >= top['w'] and limit_d >= top['d']):
-                             pass
-                         else:
-                             can_stack = True
-
-                if can_stack:
-                    top['w'], top['d'] = final_top_w, final_top_d
-                    base['child'] = top; merged_indices.add(j); break
-
-        active_blocks = [b for k, b in enumerate(blocks) if k not in merged_indices]
-        pallet_states = []
-        
-        for blk in active_blocks:
-            w_total = blk['g'] + (blk['child']['g'] if blk['child'] else 0)
-            placed = False
-            
-            target_p = blk['target_pallet']
-            start_p_idx = 0
-            end_p_idx = len(pallet_states)
-            
-            if target_p is not None:
-                while len(pallet_states) < target_p:
-                    pallet_states.append({'items': [], 'cur_g': 0.0, 'cx': 0, 'cy': 0, 'rh': 0})
-                start_p_idx = target_p - 1
-                end_p_idx = target_p
-            
-            for p_idx in range(start_p_idx, end_p_idx):
-                p_state = pallet_states[p_idx]
-                if p_state['cur_g'] + w_total > MAX_W: continue
-                
-                temp_cx, temp_cy, temp_rh = p_state['cx'], p_state['cy'], p_state['rh']
-                
-                candidates = []
-                if blk['orient'] == "自動":
-                    candidates = [(blk['orig_w'], blk['orig_d']), (blk['orig_d'], blk['orig_w'])]
-                else:
-                    candidates = [(blk['w'], blk['d'])]
-
-                possible_fits = [] 
-                
-                for tw, td in candidates:
-                    if temp_cx + tw <= PW and temp_cy + td <= PD:
-                        possible_fits.append({
-                            'type': 0, 'w': tw, 'd': td, 
-                            'rh': max(temp_rh, td),
-                            'cx': temp_cx, 'cy': temp_cy
-                        })
+            # Y軸方向
+            for y in range(0, self.max_d, step):
+                # X軸方向
+                for x in range(0, self.max_w, step):
                     
-                    elif temp_cy + temp_rh + td <= PD:
-                        if tw <= PW:
-                            possible_fits.append({
-                                'type': 1, 'w': tw, 'd': td,
-                                'rh': td,
-                                'cx': 0, 'cy': temp_cy + temp_rh
-                            })
+                    # まず回転なしでトライ
+                    if self.can_place(item, x, y, z, False):
+                        item.x, item.y, item.z = x, y, z
+                        item.rotated = False
+                        self.items.append(item)
+                        return True
+                    
+                    # ダメなら回転してトライ（自動回転ロジック）
+                    if self.can_place(item, x, y, z, True):
+                        item.x, item.y, item.z = x, y, z
+                        item.rotated = True
+                        self.items.append(item)
+                        return True
+                        
+        return False
 
-                if possible_fits:
-                    best = sorted(possible_fits, key=lambda x: (x['type'], x['rh']))[0]
-                    
-                    blk['w'], blk['d'] = best['w'], best['d']
-                    blk['x'] = best['cx']; blk['y'] = best['cy']; blk['z'] = 0
-                    
-                    p_state['items'].append(blk); p_state['cur_g'] += w_total
-                    
-                    if best['type'] == 0:
-                        p_state['cx'] += best['w']
-                        p_state['rh'] = best['rh']
-                    else:
-                        p_state['cx'] = best['w']
-                        p_state['cy'] = best['cy']
-                        p_state['rh'] = best['rh']
-                    
-                    placed = True; break
-            
-            if not placed:
-                if target_p is None:
-                    fin_w, fin_d = blk['orig_w'], blk['orig_d']
-                    if blk['orient'] == "自動":
-                        if fin_w > PW and fin_d <= PW:
-                            fin_w, fin_d = fin_d, fin_w
-                    else:
-                        fin_w, fin_d = blk['w'], blk['d']
-                    
-                    blk['w'], blk['d'] = fin_w, fin_d
-                    new_state = {'items': [blk], 'cur_g': w_total, 'cx': blk['w'], 'cy': 0, 'rh': blk['d']}
-                    blk['x'] = 0; blk['y'] = 0; blk['z'] = 0; pallet_states.append(new_state)
+def optimize_loading(order_list, pallet_spec):
+    """
+    order_list: [(id, w, d, h, weight, qty), ...]
+    pallet_spec: (max_w, max_d, max_h, max_weight)
+    """
+    
+    # 1. すべての商品を個別のItemインスタンスに展開
+    all_items = []
+    for info in order_list:
+        p_id, w, d, h, weight, qty = info
+        for _ in range(qty):
+            all_items.append(Item(p_id, w, d, h, weight))
 
-        st.session_state.results = [ps['items'] for ps in pallet_states]
-        st.session_state.params = {'PW':PW, 'PD':PD, 'PH':PH, 'MAX_W':MAX_W, 'OH':OH}
-        st.session_state.input_products = items
-        st.session_state.calculated = True
+    # ---------------------------------------------------------
+    # 【最重要修正】 ソートロジックの実装
+    # 底面積(w*d)が大きい順に並び替える。
+    # これにより「大きな岩を先に入れ、隙間に砂利を入れる」挙動になる。
+    # ---------------------------------------------------------
+    all_items.sort(key=lambda x: x.area, reverse=True)
+
+    pallets = []
+    
+    # 商品を順番に処理
+    for item in all_items:
+        placed = False
         
-        new_frozen_states = {}
-        for ps in pallet_states:
-            for item in ps['items']:
-                is_vertical = (item['w'] == item['orig_d'] and item['w'] != item['orig_w'])
-                determined = "vertical" if is_vertical else "horizontal"
-                for i_id in item['ids']:
-                    new_frozen_states[(item['name'], i_id)] = determined
-        st.session_state.frozen_states = new_frozen_states
-
-# --- 結果表示 ---
-if st.session_state.get('calculated', False):
-    results = st.session_state.results
-    params = st.session_state.params
-    total_p = len(results)
-    
-    st.markdown("### 📊 計算結果")
-    
-    fig_truck = create_horizontal_trucks_figure(total_p)
-    img_buf = io.BytesIO()
-    fig_truck.savefig(img_buf, format='png', bbox_inches='tight', dpi=300, facecolor='white')
-    img_buf.seek(0)
-    
-    col1, col2 = st.columns([1, 1])
-    with col1:
-        st.metric("必要パレット数", f"{total_p} 枚")
-        st.info(f"🚚 4t車: {total_p/10.0:.1f} 台 / 10t車: {total_p/16.0:.1f} 台")
+        # 既存のパレットに乗るか試す
+        for pallet in pallets:
+            if pallet.add_item(item):
+                placed = True
+                break
         
-        pdf_file = create_pdf(results, params, img_buf, st.session_state.input_products)
-        st.download_button(
-            label="📄 PDFレポートをダウンロード",
-            data=pdf_file,
-            file_name="pallet_report.pdf",
-            mime="application/pdf",
-            type="primary"
-        )
-    with col2:
-        st.pyplot(fig_truck)
+        # 乗らなければ新しいパレットを追加
+        if not placed:
+            new_pallet = Pallet(*pallet_spec)
+            new_pallet.add_item(item) # 新パレットなら必ず乗るはず（単体でオーバーしてなければ）
+            pallets.append(new_pallet)
 
-    st.markdown("---")
-    st.subheader("詳細: パレット内訳")
+    return pallets
 
-    for i, p_items in enumerate(results):
-        with st.expander(f"パレット {i+1}", expanded=True):
-            p_weight = sum([b['g'] + (b['child']['g'] if b['child'] else 0) for b in p_items])
-            cnt = {}
-            for b in p_items:
-                cnt[b['disp_name']] = cnt.get(b['disp_name'], 0) + b['ly']
-                if b.get('child'): cnt[b['child']['disp_name']] = cnt.get(b['child']['disp_name'], 0) + b['child']['ly']
-            d_str = ", ".join([f"{k}:{v}個" for k,v in cnt.items()])
-            
-            st.markdown(f"**重量: {p_weight}kg** | 内訳: {d_str}")
-            
-            fig = draw_pallet_figure(params['PW'], params['PD'], params['PH'], p_items)
-            st.pyplot(fig)
+# ==========================================
+# 実行部 (今回のデータを入力)
+# ==========================================
+if __name__ == "__main__":
+    # パレット仕様: 1100x1100x1700, 1000kg
+    SPEC = (1100, 1100, 1700, 1000)
+
+    # 入力データ (ID, W, D, H, Wt, Qty)
+    # ※B-002はレポートの図から推測し414mmとしています（14mmは誤記と判断）
+    input_data = [
+        ("A-001", 250, 200, 225, 5.0, 14),
+        ("B-002", 414, 214, 200, 5.0, 20), 
+        ("C-004", 314, 214, 200, 5.0, 18),
+        ("A-002", 60,  210, 180, 5.0, 5),
+        ("B-001", 354, 264, 200, 5.0, 7),
+        ("C-001", 10,  210, 140, 5.0, 5),
+        ("D-002", 450, 300, 230, 5.0, 30),
+        ("A-003", 140, 300, 220, 5.0, 20),
+        ("F-001", 440, 280, 130, 5.0, 40),
+        ("F-002", 500, 240, 230, 5.0, 4),
+        ("C-005", 460, 285, 170, 5.0, 15),
+        ("B-003", 470, 390, 150, 5.0, 6),
+    ]
+
+    result_pallets = optimize_loading(input_data, SPEC)
+
+    print(f"計算結果: パレット総数 {len(result_pallets)}枚")
+    print("-" * 30)
+    for i, p in enumerate(result_pallets):
+        print(f"パレット No.{i+1}")
+        print(f"  積載個数: {len(p.items)}個")
+        print(f"  総重量: {p.current_weight()}kg")
+        # デバッグ用: 積まれた商品の上位いくつかを表示
+        top_items = [item.item_id for item in p.items[:5]]
+        print(f"  初期配置商品(土台): {top_items} ...")
+        print("-" * 30)
