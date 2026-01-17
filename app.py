@@ -190,6 +190,8 @@ if 'results' not in st.session_state: st.session_state.results = []
 if 'params' not in st.session_state: st.session_state.params = {}
 if 'df_products' not in st.session_state: st.session_state.df_products = get_empty_data()
 if 'calculated' not in st.session_state: st.session_state.calculated = False
+# 【修正箇所1】エディタのリセット用キー
+if 'editor_key' not in st.session_state: st.session_state.editor_key = 0
 
 with st.expander("パレット設定", expanded=True):
     c_pw, c_pd, c_ph, c_pm, c_oh = st.columns(5)
@@ -206,11 +208,16 @@ col_btn1, col_btn2 = st.columns([1, 5])
 with col_btn1:
     if st.button("🗑️ クリア", use_container_width=True):
         st.session_state.df_products = get_empty_data()
+        # 【修正箇所2】キーを更新して強制リセット
+        st.session_state.editor_key += 1
         st.rerun()
 
 column_order = ["商品名", "幅(mm)", "奥行(mm)", "高さ(mm)", "重量(kg)", "数量", "優先度", "配置向き"]
+
+# 【修正箇所3】key引数にeditor_keyを指定
 edited_df = st.data_editor(
     st.session_state.df_products,
+    key=f"data_editor_{st.session_state.editor_key}",
     num_rows="dynamic",
     use_container_width=True,
     column_config={
@@ -386,7 +393,7 @@ if st.session_state.calculated and st.session_state.results:
         selected_src = c1.selectbox("1. 移動する商品", options=[m[1] for m in move_options], 
                                     format_func=lambda x: [m[0] for m in move_options if m[1]==x][0])
         
-        # 2. 移動先パレット (【修正】初期値を移動元と同じパレットにする)
+        # 2. 移動先パレット (初期値を移動元と同じパレットにする)
         default_dst_idx = selected_src[0]
         
         pallet_options = list(range(len(results))) + [len(results)]
