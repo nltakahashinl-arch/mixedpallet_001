@@ -16,7 +16,7 @@ from reportlab.lib.utils import ImageReader
 # --- ページ設定 (ワイド表示) ---
 st.set_page_config(layout="wide", page_title="パレット積載シミュレーター (統合版)")
 
-# --- フォント準備 ---
+# --- フォント準備 (Matplotlib & ReportLab用) ---
 @st.cache_resource
 def setup_font():
     font_path = "ipaexg.ttf"
@@ -149,25 +149,37 @@ def draw_pallet_figure(PW, PD, PH, p_items, figsize=(18, 8)):
     plt.tight_layout()
     return fig
 
-# --- PDF生成 ---
+# --- PDF生成 (修正版) ---
 def create_pdf(current_pallets, params):
     buffer = io.BytesIO()
-    font_name = "IPAexGothic" if os.path.exists('ipaexg.ttf') else "Helvetica"
+    
+    # 【修正】フォント登録処理をここに追加
+    font_name = "Helvetica" # デフォルト
+    if os.path.exists('ipaexg.ttf'):
+        try:
+            pdfmetrics.registerFont(TTFont('IPAexGothic', 'ipaexg.ttf'))
+            font_name = "IPAexGothic"
+        except Exception:
+            pass # 登録済み等のエラーは無視
+
     c = canvas.Canvas(buffer, pagesize=A4)
     w_a4, h_a4 = A4
     y = h_a4 - 50
+    
     c.setFont(font_name, 16)
     c.drawString(40, y, "パレット積載シミュレーション報告書")
     y -= 30
     c.setFont(font_name, 10)
     
     for i, p_items in enumerate(current_pallets):
+        # 改ページ判定
         if y < 350: 
             c.showPage(); y = h_a4 - 50; c.setFont(font_name, 10)
         
         c.drawString(40, y, f"■ パレット {i+1} (商品数: {len(p_items)}個)")
         y -= 20
         
+        # 図の描画
         fig = draw_pallet_figure(params['PW'], params['PD'], params['PH'], p_items, figsize=(12, 6))
         img_buf = io.BytesIO()
         fig.savefig(img_buf, format='png', bbox_inches='tight')
@@ -190,7 +202,6 @@ if 'results' not in st.session_state: st.session_state.results = []
 if 'params' not in st.session_state: st.session_state.params = {}
 if 'df_products' not in st.session_state: st.session_state.df_products = get_empty_data()
 if 'calculated' not in st.session_state: st.session_state.calculated = False
-# 【修正箇所1】エディタのリセット用キー
 if 'editor_key' not in st.session_state: st.session_state.editor_key = 0
 
 with st.expander("パレット設定", expanded=True):
@@ -208,13 +219,11 @@ col_btn1, col_btn2 = st.columns([1, 5])
 with col_btn1:
     if st.button("🗑️ クリア", use_container_width=True):
         st.session_state.df_products = get_empty_data()
-        # 【修正箇所2】キーを更新して強制リセット
         st.session_state.editor_key += 1
         st.rerun()
 
 column_order = ["商品名", "幅(mm)", "奥行(mm)", "高さ(mm)", "重量(kg)", "数量", "優先度", "配置向き"]
 
-# 【修正箇所3】key引数にeditor_keyを指定
 edited_df = st.data_editor(
     st.session_state.df_products,
     key=f"data_editor_{st.session_state.editor_key}",
@@ -389,11 +398,9 @@ if st.session_state.calculated and st.session_state.results:
                 value = (p_idx, it_idx)
                 move_options.append((label, value))
         
-        # 1. 移動する商品を選択
         selected_src = c1.selectbox("1. 移動する商品", options=[m[1] for m in move_options], 
                                     format_func=lambda x: [m[0] for m in move_options if m[1]==x][0])
         
-        # 2. 移動先パレット (初期値を移動元と同じパレットにする)
         default_dst_idx = selected_src[0]
         
         pallet_options = list(range(len(results))) + [len(results)]
@@ -401,7 +408,6 @@ if st.session_state.calculated and st.session_state.results:
                                  index=default_dst_idx, 
                                  format_func=lambda x: f"パレット {x+1}" if x < len(results) else "新規パレット作成")
 
-        # 3. 配置場所（土台）
         dst_base_options = [("床 (空きスペースに追加)", None)]
         if dst_p_idx < len(results):
             for it_idx, it in enumerate(results[dst_p_idx]):
